@@ -60,7 +60,7 @@ async function handle(item){
   try{
    const result=await queue('jobs','POST',{url,quality:item.resolvedQuality,category:item.resolvedCategory,requestId:'feishu:'+digest(item.id)+':'+index});
    state.watches[result.job.id]={lastState:result.job.state,notified:['completed','failed','cancelled'].includes(result.job.state)};save();
-   await ui.showJob(result.job,(result.duplicate?'任务已存在，没有重复下载。':'已加入 下载队列，可以关闭飞书。')+'\n');
+   await ui.showJob(result.job,(result.duplicate?'任务已存在，没有重复下载。':'已加入下载队列，可以关闭飞书。')+'\n');
   }catch(e){if(!e.permanent)throw e;await send(categories.find(c=>c.id===item.resolvedCategory)?.private?'私密任务提交失败，请稍后重试或检查磁盘。':'无法提交：'+e.message);}
  }
  await ui.home(parsed.excess?'已处理前 5 个链接，其余请重新选择分类后发送。':'链接已处理，可继续添加或查看下载任务。');

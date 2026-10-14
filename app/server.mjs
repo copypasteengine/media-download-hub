@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {spawn} from 'node:child_process';
+import {validateTelegramAttachment,openTelegramFile,TELEGRAM_CLOUD_LIMIT} from './telegram-files.mjs';
 import {downloadOptions, downloadError, codecFallback} from './quality.mjs';
 import {availableFilename,alreadyPublished,publishFile} from './naming.mjs';
 
@@ -49,7 +50,7 @@ function internalTunnel(raw){
  return new URL('/tunnel'+u.search,cfg.apiInternal).href;
 }
 function publicJob(j){
- return {...Object.fromEntries(Object.entries(j).filter(([k])=>!['target','partial','cancelRequested'].includes(k))),categoryName:j.categoryName||categories.find(c=>c.id===j.category)?.name||j.category,private:j.private??categories.find(c=>c.id===j.category)?.private??false};
+ return {...Object.fromEntries(Object.entries(j).filter(([k])=>!['target','partial','cancelRequested','telegramSource','publishing'].includes(k))),categoryName:j.categoryName||categories.find(c=>c.id===j.category)?.name||j.category,private:j.private??categories.find(c=>c.id===j.category)?.private??false};
 }
 function update(j,values){Object.assign(j,values,{updatedAt:now()});persist();}
 function removePartial(j){if(j.partial){try{fs.unlinkSync(j.partial);}catch(e){if(e.code!=='ENOENT')throw e;}}}
@@ -68,15 +69,24 @@ async function download(j,controller){
  if(alreadyPublished(j)){removePartial(j);update(j,{state:'completed',error:null});return;}
  removePartial(j);
  update(j,{state:'resolving',bytes:0,total:null,error:null,attempts:(j.attempts||0)+1});
+ let telegramFile;
+ try{
+ let result,remote;
+ if(j.sourceType==='telegram'){
+  const source=validateTelegramAttachment(j.telegramSource);
+  telegramFile=await openTelegramFile(j.telegramSource,{...cfg.telegramFiles,signal:controller.signal});
+  result={filename:source.filename,metadata:{title:source.title},mediaInfo:{resolution:source.width&&source.height?`${source.width}×${source.height}`:null,qualityLabel:'Telegram 提供的文件'}};
+ }else{
  const resolve=options=>fetch(cfg.apiInternal,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(options),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(90000)])});
  const options=downloadOptions(j);
- let response=await resolve(options),result=await response.json();
+ let response=await resolve(options);result=await response.json();
  const fallback=codecFallback(options,result);
  if(fallback){response=await resolve(fallback);result=await response.json();}
  if(!response.ok||result.status==='error')throw fail(downloadError(result.error?.code||response.status));
  if(result.status==='picker')throw fail('此链接包含多张图片或多个媒体，请在原 Cobalt 页面选择单项；下载队列目前接收单个视频');
  if(result.status!=='tunnel')throw fail('此资源未生成单个视频通道，请使用原 Cobalt 页面下载');
- const remote=internalTunnel(result.url);
+ remote=internalTunnel(result.url);
+ }
  const original=String(result.filename||'video.mp4'), ext=path.extname(original).toLowerCase();
  if(!['.mp4','.mkv','.webm','.mov','.m4v','.avi','.ts','.m4a','.mp3','.ogg','.opus','.wav'].includes(ext))throw fail('该文件不是支持入库的视频或音频格式');
  const metadata=result.metadata&&typeof result.metadata==='object'?result.metadata:{};
@@ -86,18 +96,19 @@ async function download(j,controller){
  update(j,{state:'downloading',filename});
  const headerTimer=setTimeout(()=>controller.abort(fail('下载连接超过 90 秒未响应，请重试')),90000);
  let stream;
- try{stream=await fetch(remote,{redirect:'error',signal:controller.signal});}finally{clearTimeout(headerTimer);}
+ try{stream=telegramFile?.response||await fetch(remote,{redirect:'error',signal:controller.signal});}finally{clearTimeout(headerTimer);}
  if(!stream.ok||!stream.body)throw fail('下载连接失败：HTTP '+stream.status);
  const type=stream.headers.get('content-type')||'';
  if(type.includes('json')||type.includes('text/html')){await stream.body.cancel();throw fail('上游返回了错误信息，未保存为视频');}
- const total=Number(stream.headers.get('content-length'))||null;
- if(total&&(total>maxFile||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail('文件超过 50 GiB 或媒体盘可用空间不足');}
+ const total=Number(stream.headers.get('content-length'))||telegramFile?.size||null;
+ if(total&&(total>maxFile||(telegramFile&&total>TELEGRAM_CLOUD_LIMIT)||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail('文件超过 50 GiB 或媒体盘可用空间不足');}
  update(j,{total});
  let lastChunk=Date.now(),lastCheck=0,lastPersist=Date.now();
  const watchdog=setInterval(()=>{if(Date.now()-lastChunk>120000)controller.abort(fail('下载超过两分钟没有数据，请重试'));},10000);
  const meter=new Transform({transform(chunk,encoding,cb){
   try{
    lastChunk=Date.now();j.bytes+=chunk.length;
+   if(telegramFile&&j.bytes>TELEGRAM_CLOUD_LIMIT)throw fail('视频超过 Telegram 官方接口的 20 MB 限制');
    if(j.bytes>maxFile)throw fail('单个文件超过 50 GiB 限制');
    if(j.bytes-lastCheck>16*1024**2){storage(j.category);lastCheck=j.bytes;}
    if(Date.now()-lastPersist>15000){persist();lastPersist=Date.now();}
@@ -106,7 +117,7 @@ async function download(j,controller){
  }});
  try{await pipeline(stream.body,meter,fs.createWriteStream(j.partial,{flags:'wx',mode:0o600}),{signal:controller.signal});}
  finally{clearInterval(watchdog);}
- if(!j.bytes||(total&&j.bytes!==total))throw fail('文件未下载完整，请重试');
+ if(!j.bytes||(total&&j.bytes!==total)||(telegramFile?.size&&j.bytes!==telegramFile.size))throw fail('文件未下载完整，请重试');
  update(j,{state:'checking'});
  await verifyMedia(j.partial,controller.signal);
  if(controller.signal.aborted)throw fail('任务已取消');
@@ -116,6 +127,7 @@ async function download(j,controller){
  fs.chmodSync(j.partial,0o644);
  publishFile(j,root,persist);
  update(j,{state:'completed',finishedAt:now(),error:null});
+ }finally{await telegramFile?.close();}
 }
 async function kick(){
  if(worker||stopping)return;
@@ -124,7 +136,8 @@ async function kick(){
  try{await download(j,controller);}
  catch(e){
   try{removePartial(j);}catch{}
-  update(j,{state:j.cancelRequested?'cancelled':stopping?'queued':'failed',error:j.cancelRequested?null:stopping?'服务重启后重新下载':controller.signal.reason?.message||e.message||'下载失败'});
+  const safeError=j.sourceType==='telegram'&&!/^[\u3400-\u9fff]/.test(e.message||'')?'Telegram 文件下载失败，请检查代理后重试。':e.message;
+  update(j,{state:j.cancelRequested?'cancelled':stopping?'queued':'failed',error:j.cancelRequested?null:stopping?'服务重启后重新下载':controller.signal.reason?.message||safeError||'下载失败'});
  }
  finally{worker=null;if(!stopping)setTimeout(kick,100);}
 }
@@ -180,13 +193,16 @@ const server=http.createServer(async(req,res)=>{
   if(pathname==='/nas/api/jobs'&&req.method==='POST'){
    const data=await body(req), category=data.category||cfg.defaultCategory;
    if(categories.find(c=>c.id===category)?.private&&!user.private)throw fail('无权使用该分类',403);
-   storage(category);const url=inputUrl(data.url),quality=String(data.quality||'1080');
-   if(!['360','480','720','1080','1440','2160','max'].includes(quality))throw fail('不支持的清晰度');
+   storage(category);
+   const source=data.source?validateTelegramAttachment(data.source):null;
+   if(source){if(!cfg.telegramFiles?.token)throw fail('Telegram Bot 尚未启用');source.botId=cfg.telegramFiles.token.split(':')[0];}
+   const url=source?'https://t.me/':inputUrl(data.url),quality=source?'original':String(data.quality||'1080');
+   if(!source&&!['360','480','720','1080','1440','2160','max'].includes(quality))throw fail('不支持的清晰度');
    const requestId=typeof data.requestId==='string'?data.requestId.slice(0,120):null;
-   const existing=jobs.find(j=>j.owner===user.username&&((requestId&&j.requestId===requestId)||(j.url===url&&j.category===category&&j.quality===quality&&(activeStates.has(j.state)||j.state==='completed'))));
+   const existing=jobs.find(j=>j.owner===user.username&&((requestId&&j.requestId===requestId)||((source?j.sourceType==='telegram'&&j.telegramSource?.uniqueId===source.uniqueId&&j.telegramSource?.botId===source.botId:j.sourceType!=='telegram'&&j.url===url)&&j.category===category&&j.quality===quality&&(activeStates.has(j.state)||j.state==='completed'))));
    if(existing)return json(res,200,{job:publicJob(existing),duplicate:true});
    if(jobs.filter(j=>activeStates.has(j.state)).length>=50)throw fail('队列已满，请等待现有任务完成',429);
-   const j={id:crypto.randomUUID(),owner:user.username,requestId,url,quality,category,categoryName:categories.find(c=>c.id===category).name,private:!!categories.find(c=>c.id===category).private,state:'queued',bytes:0,total:null,createdAt:now(),updatedAt:now(),attempts:0};
+   const j={id:crypto.randomUUID(),owner:user.username,requestId,url,quality,...(source?{sourceType:'telegram',telegramSource:source,metadata:{title:source.title},filename:source.filename}:{}),category,categoryName:categories.find(c=>c.id===category).name,private:!!categories.find(c=>c.id===category).private,state:'queued',bytes:0,total:null,createdAt:now(),updatedAt:now(),attempts:0};
    jobs.push(j);persist();setTimeout(kick,0);return json(res,201,{job:publicJob(j)});
   }
   const match=pathname.match(/^\/nas\/api\/jobs\/([a-f0-9-]{36})\/(cancel|retry)$/);

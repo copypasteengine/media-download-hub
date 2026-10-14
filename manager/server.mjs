@@ -126,7 +126,7 @@ const server=http.createServer(async(req,res)=>{try{
    const all=read(state+'/queue/jobs.json',[]),active=new Set(['queued','resolving','downloading','checking']);
    let jobs=all.filter(j=>(filter==='all'||filter==='active'&&active.has(j.state)||filter==='history'&&!active.has(j.state)||j.state===filter)&&(!search||[j.filename,j.metadata?.title,j.categoryName,j.url].some(v=>String(v||'').toLowerCase().includes(search)))).reverse();
    const total=jobs.length,page=Math.max(1,Math.min(Number(query.get('page'))||1,Math.max(1,Math.ceil(total/25)))),categories=readSettings().categories;
-   jobs=jobs.slice((page-1)*25,page*25).map(({target,partial,cancelRequested,...j})=>({...j,categoryName:categories.find(c=>c.id===j.category)?.name||j.categoryName||j.category}));
+   jobs=jobs.slice((page-1)*25,page*25).map(({target,partial,cancelRequested,telegramSource,publishing,...j})=>({...j,categoryName:categories.find(c=>c.id===j.category)?.name||j.categoryName||j.category}));
    return json(res,{jobs,total,page,pages:Math.max(1,Math.ceil(total/25)),active:all.filter(j=>active.has(j.state)).length});
   }
   const job=pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/(cancel|retry)$/);if(job&&req.method==='POST')return json(res,await queueRequest('jobs/'+job[1]+'/'+job[2],'POST',{}));

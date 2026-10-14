@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {telegramPostLink,attachmentCategory} from './telegram-files.mjs';
 import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
 import {createRequire} from 'node:module';
@@ -34,7 +35,7 @@ async function handle(update){
  }
  if(!ownerAllowed(state.owner,msg))return;
  if(await ui.menuMessage(msg))return;
- const parsed=parseMessage(msg,cfg);
+ let parsed;try{parsed=parseMessage(msg,cfg);}catch(e){if(!e.permanent)throw e;await send(e.message);return;}
  switch(parsed.command){
   case 'start':case 'menu':await ui.home();return;
   case 'help':await send(helpText,{reply_markup:mainKeyboard});return;
@@ -45,13 +46,24 @@ async function handle(update){
   case 'download':break;
   default:await send('发送视频链接即可下载，或用 /help 查看命令。');return;
  }
- if(!parsed.urls.length){if(state.awaitingLink||parsed.explicitCategory)await ui.prompt(parsed.explicitCategory?parsed.category:state.awaitingLink.category);else await ui.home();return;}
- const category=await ui.resolveCategory(msg,parsed);if(!category)return;
+ if(!parsed.attachment&&!parsed.urls.length){if(state.awaitingLink||parsed.explicitCategory)await ui.prompt(parsed.explicitCategory?parsed.category:state.awaitingLink.category);else await ui.home();return;}
+ const category=await attachmentCategory(msg,parsed,{state,resolve:ui.resolveCategory,save});if(!category)return;
+ if(parsed.attachment){
+  try{
+   const r=await queue('jobs','POST',{source:parsed.attachment,category,requestId:`tg:${update.update_id}:attachment`});
+   state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();
+   await ui.showJob(r.job,(r.duplicate?'这个视频已经在任务列表中，没有重复保存。':'已收到转发视频，加入下载队列。')+'\n');
+   await ui.home('视频将按 Telegram 提供的文件保存，不重新转码。可继续选择分类并发送视频或链接。');
+  }catch(e){if(!e.permanent)throw e;await send('无法保存：'+e.message);}
+  return;
+ }
+
  for(const [i,url] of parsed.urls.entries()){
   try{
+   if(telegramPostLink(url)){await send('这是 Telegram 消息链接。请在 Telegram 打开该消息，直接把视频转发给我；仅凭链接无法读取频道或私聊的视频。');continue;}
    const r=await queue('jobs','POST',{url,quality:state.quality,category,requestId:`tg:${update.update_id}:${i}`});
    state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();
-   await ui.showJob(r.job,(r.duplicate?'此任务已存在，没有重复下载。':'已加入 下载队列，可关闭 Telegram。')+'\n');
+   await ui.showJob(r.job,(r.duplicate?'此任务已存在，没有重复下载。':'已加入下载队列，可关闭 Telegram。')+'\n');
   }catch(e){if(!e.permanent)throw e;await send('无法提交：'+e.message);}
  }
  await ui.home(parsed.excess?'已处理前 5 个链接。其余请重新选择分类后发送。':'本次链接已处理。可以点菜单继续添加，或查看下载任务。');
