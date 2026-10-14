@@ -3,3 +3,14 @@ import {mediaFilename,availableFilename,publishFile,alreadyPublished} from '../a
 test('use collected title and artist, preserve Chinese and sanitize path separators',()=>{assert.equal(mediaFilename('bilibili_BV1_480.mp4',{title:'真正的视频标题',artist:'UP主'}),'真正的视频标题 - UP主.mp4');assert.equal(mediaFilename('video.mp4',{title:'../标题/分P:测试?',artist:'作者'}),'／标题／分P：测试？ - 作者.mp4');assert.equal(mediaFilename('video.mp4',{title:'标题',artist:'标题'}),'标题.mp4');});
 test('missing metadata keeps readable source name; Unicode names keep extension and byte limit',()=>{assert.equal(mediaFilename('../../unsafe.mp4'),'unsafe.mp4');const name=mediaFilename('source.mp4',{title:'很长的视频标题'.repeat(80),artist:'作者'});assert.ok(Buffer.byteLength(name)<=240);assert.ok(name.endsWith('.mp4'));assert.ok(!name.includes('\ufffd'));});
 test('no random suffix unless collision; publish cannot overwrite, and recovery proves file identity',t=>{const root=fs.mkdtempSync(path.join(os.tmpdir(),'cobalt-name-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const metadata={title:'标题',artist:'作者'},id='12345678-1234-1234-1234-123456789012';assert.equal(availableFilename(root,'old.mp4',metadata,id),'标题 - 作者.mp4');const partial=path.join(root,'file.part');fs.writeFileSync(partial,'new-video');const job={id,metadata,originalFilename:'old.mp4',partial,filename:'标题 - 作者.mp4',target:path.join(root,'标题 - 作者.mp4')};fs.writeFileSync(job.target,'existing-video');assert.equal(alreadyPublished(job),false);publishFile(job,root,()=>{});assert.equal(fs.readFileSync(path.join(root,'标题 - 作者.mp4'),'utf8'),'existing-video');assert.equal(job.filename,'标题 - 作者 [12345678].mp4');assert.equal(fs.readFileSync(job.target,'utf8'),'new-video');assert.equal(alreadyPublished(job),true);fs.unlinkSync(job.target);fs.writeFileSync(job.target,'unrelated');assert.equal(alreadyPublished(job),false);});
+
+test('recovery rejects legacy identity records and modified same-size files',t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'media-identity-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const job={id:'identity',partial:path.join(root,'video.part'),target:path.join(root,'video.mp4')};
+ fs.writeFileSync(job.partial,'original');publishFile(job,root,()=>{});
+ const recovered=JSON.parse(JSON.stringify(job));assert.equal(alreadyPublished(recovered),true);
+ const legacy=structuredClone(recovered);delete legacy.publishing.mtimeNs;delete legacy.publishing.birthtimeNs;
+ assert.equal(alreadyPublished(legacy),false);
+ fs.writeFileSync(job.target,'modified');fs.utimesSync(job.target,new Date(0),new Date(0));
+ assert.equal(alreadyPublished(recovered),false);
+});

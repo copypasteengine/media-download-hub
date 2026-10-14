@@ -21,11 +21,18 @@ export function availableFilename(root,original,metadata,id){
 }
 export function alreadyPublished(job){
  if(!job.target||!job.publishing)return false;
- try{const st=fs.statSync(job.target);return st.ino===job.publishing.ino&&st.dev===job.publishing.dev&&st.size===job.publishing.size&&st.size>0;}catch{return false;}
+ try{
+  // Linux may immediately reuse an inode after unlink, even for a same-sized file.
+  // Hard links preserve mtime/birthtime; ctime changes during publication.
+  const st=fs.lstatSync(job.target,{bigint:true}),saved=job.publishing;
+  return st.isFile()&&st.size>0n&&['ino','dev','size'].every(k=>String(st[k])===String(saved[k]))
+   &&typeof saved.mtimeNs==='string'&&st.mtimeNs.toString()===saved.mtimeNs
+   &&typeof saved.birthtimeNs==='string'&&st.birthtimeNs.toString()===saved.birthtimeNs;
+ }catch{return false;}
 }
 // Hard-link the finished temporary file atomically, refusing to overwrite an existing name.
 export function publishFile(job,root,persist){
- const st=fs.statSync(job.partial);job.publishing={dev:st.dev,ino:st.ino,size:st.size};persist();
+ const st=fs.statSync(job.partial,{bigint:true});job.publishing=Object.fromEntries(['dev','ino','size','mtimeNs','birthtimeNs'].map(k=>[k,st[k].toString()]));persist();
  for(let attempt=0;attempt<10000;attempt++){
   try{fs.linkSync(job.partial,job.target);fs.unlinkSync(job.partial);return;}
   catch(e){if(e.code!=='EEXIST')throw e;job.filename=availableFilename(root,job.originalFilename,job.metadata,job.id);job.target=path.join(root,job.filename);persist();}
