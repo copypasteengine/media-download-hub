@@ -1,5 +1,8 @@
 import fs from 'node:fs';
-import {telegramPostLink,attachmentCategory} from './telegram-files.mjs';
+import {createForwardFlow} from './telegram-forward.mjs';
+import {migrateTelegramMode} from './telegram-mode.mjs';
+import {read,atomic} from '../manager/core.mjs';
+import {telegramPostLink} from './telegram-files.mjs';
 import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
 import {createRequire} from 'node:module';
@@ -16,8 +19,9 @@ let session=null,stopping=false,notifying=false;
 const shutdown=new AbortController();
 const sleep=ms=>new Promise(r=>{const done=()=>{clearTimeout(t);shutdown.signal.removeEventListener('abort',done);r();};const t=setTimeout(done,ms);shutdown.signal.addEventListener('abort',done,{once:true});});
 function save(){const tmp=statePath+'.new';fs.writeFileSync(tmp,JSON.stringify(state),{mode:0o600});const fd=fs.openSync(tmp,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,statePath);}
-const transport=createTelegramTransport({token:cfg.token,makeProxy:()=>new ProxyAgent(cfg.proxy||'http://proxy:1080'),signal:shutdown.signal,onFailure:detail=>console.log('Telegram transport failure '+JSON.stringify(detail))});
+const transport=createTelegramTransport({token:cfg.token,local:!!cfg.local,makeProxy:()=>new ProxyAgent(cfg.proxy||'http://proxy:1080'),signal:shutdown.signal,onFailure:detail=>console.log('Telegram transport failure '+JSON.stringify(detail))});
 const telegram=transport.request;
+const currentHelp=cfg.local?helpText.replace('当前官方 Bot 接口限单个视频 20 MB。较大文件需要自建 Bot API。','已启用大文件服务，单文件大小及磁盘保留空间按后台设置执行。'):helpText;
 async function queue(route,method='GET',data,retried=false){
  if(!session){const r=await fetch(cfg.queueUrl+'/nas/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:cfg.queueUsername,password:cfg.queuePassword}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('下载队列登录失败');const cookie=r.headers.get('set-cookie')?.split(';')[0];const me=await fetch(cfg.queueUrl+'/nas/api/me',{headers:{Cookie:cookie},signal:AbortSignal.timeout(10000)}).then(r=>r.json());session={cookie,csrf:me.csrf};}
  const r=await fetch(cfg.queueUrl+'/nas/api/'+route,{method,headers:{Cookie:session.cookie,'X-CSRF-Token':session.csrf,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(15000)});
@@ -25,12 +29,13 @@ async function queue(route,method='GET',data,retried=false){
  const d=await r.json();if(!r.ok)throw Object.assign(new Error(d.error||'队列请求失败'),{permanent:r.status>=400&&r.status<500});return d;
 }
 async function send(text,extra={}){if(!state.owner)return;return telegram('sendMessage',{chat_id:state.owner.chatId,text:text.slice(0,3900),link_preview_options:{is_disabled:true},...extra});}
-const ui=createUI({state,save,send,telegram,queue,categories,defaultCategory:cfg.defaultCategory});
+const ui=createUI({state,save,send,telegram,queue,categories,defaultCategory:cfg.defaultCategory,help:currentHelp});
+const forwards=createForwardFlow({state,save,send,telegram,queue,categories,showJob:ui.showJob});
 async function handle(update){
- if(update.callback_query){await ui.callback(update.callback_query);return;}
+ if(update.callback_query){if(!await forwards.callback(update.callback_query))await ui.callback(update.callback_query);return;}
  const msg=update.message;if(!msg)return;
  if(!state.owner){
-  if(canPair(cfg.pairingCode,msg)){state.owner={userId:String(msg.from.id),chatId:String(msg.chat.id)};save();await ui.home('已绑定你的 Telegram 账号，其他人和群聊无法控制下载。\n\n'+helpText);}
+  if(canPair(cfg.pairingCode,msg)){state.owner={userId:String(msg.from.id),chatId:String(msg.chat.id)};save();await ui.home('已绑定你的 Telegram 账号，其他人和群聊无法控制下载。\n\n'+currentHelp);}
   return;
  }
  if(!ownerAllowed(state.owner,msg))return;
@@ -38,7 +43,7 @@ async function handle(update){
  let parsed;try{parsed=parseMessage(msg,cfg);}catch(e){if(!e.permanent)throw e;await send(e.message);return;}
  switch(parsed.command){
   case 'start':case 'menu':await ui.home();return;
-  case 'help':await send(helpText,{reply_markup:mainKeyboard});return;
+  case 'help':await send(currentHelp,{reply_markup:mainKeyboard});return;
   case 'settings':await ui.quality();return;
   case 'quality':if(!parsed.argument){await ui.quality();return;}if(!['360','480','720','1080','1440','2160','max'].includes(parsed.argument)){await send('支持：360、480、720、1080、1440、2160、max。例如 /quality 720');return;}state.quality=parsed.argument;save();await send('后续任务优先清晰度已设为 '+state.quality+'，实际以平台可提供的画质为准。');return;
   case 'status':await ui.jobs();return;
@@ -47,16 +52,8 @@ async function handle(update){
   default:await send('发送视频链接即可下载，或用 /help 查看命令。');return;
  }
  if(!parsed.attachment&&!parsed.urls.length){if(state.awaitingLink||parsed.explicitCategory)await ui.prompt(parsed.explicitCategory?parsed.category:state.awaitingLink.category);else await ui.home();return;}
- const category=await attachmentCategory(msg,parsed,{state,resolve:ui.resolveCategory,save});if(!category)return;
- if(parsed.attachment){
-  try{
-   const r=await queue('jobs','POST',{source:parsed.attachment,category,requestId:`tg:${update.update_id}:attachment`});
-   state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();
-   await ui.showJob(r.job,(r.duplicate?'这个视频已经在任务列表中，没有重复保存。':'已收到转发视频，加入下载队列。')+'\n');
-   await ui.home('视频将按 Telegram 提供的文件保存，不重新转码。可继续选择分类并发送视频或链接。');
-  }catch(e){if(!e.permanent)throw e;await send('无法保存：'+e.message);}
-  return;
- }
+ if(parsed.attachment){await forwards.receive(msg,parsed.attachment,update.update_id);return;}
+ const category=await ui.resolveCategory(msg,parsed);if(!category)return;
 
  for(const [i,url] of parsed.urls.entries()){
   try{
@@ -80,6 +77,8 @@ async function notify(){
  }catch{console.log('Notification temporarily unavailable; retrying later');}finally{notifying=false;}
 }
 async function main(){
+ const modeFile=statePath+'.api-mode.json';
+ await migrateTelegramMode({local:!!cfg.local,botId:cfg.token.split(':')[0],previous:read(modeFile),request:async(mode,method)=>{const old=createTelegramTransport({token:cfg.token,local:mode==='local',makeProxy:()=>new ProxyAgent(cfg.proxy||'http://proxy:1080'),signal:shutdown.signal});try{return await old.request(method);}finally{await old.close();}},save:next=>{atomic(modeFile,next);atomic('/status/telegram-route.json',next);}});
  const me=await telegram('getMe');
  fs.writeFileSync((process.env.SERVICE_STATE_DIR||'/state/queue')+'/bot-info.json',JSON.stringify({username:me.username,id:me.id}),{mode:0o600});
  const webhook=await telegram('getWebhookInfo');if(webhook.url)throw Error('该 Bot 已设置 webhook，请使用专用新 Bot，避免干扰现有应用');

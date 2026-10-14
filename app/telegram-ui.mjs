@@ -1,9 +1,9 @@
 import {DEFAULT_CATEGORIES,activeCategories,categoryLabel} from './categories.mjs';
 import {statusText} from './login-health-core.mjs';
 import {helpText,ownerAllowed,jobText} from './telegram-core.mjs';
-export const MENU_VERSION=5;
+export const MENU_VERSION=6;
 export const menuLabels={jobs:'📋 我的下载',login:'🔑 登录状态',quality:'⚙️ 清晰度',help:'❓ 使用帮助',home:'↩️ 返回主菜单'};
-export function makeKeyboard(categories=DEFAULT_CATEGORIES){const buttons=activeCategories(categories).map(categoryLabel),rows=[];for(let i=0;i<buttons.length;i+=2)rows.push(buttons.slice(i,i+2));return {keyboard:[...rows,[menuLabels.jobs,menuLabels.quality],[menuLabels.login,menuLabels.help],[menuLabels.home]],resize_keyboard:true,is_persistent:true,input_field_placeholder:'点菜单选择分类，或发送视频／链接到默认分类'};}
+export function makeKeyboard(categories=DEFAULT_CATEGORIES){const buttons=activeCategories(categories).map(categoryLabel),rows=[];for(let i=0;i<buttons.length;i+=2)rows.push(buttons.slice(i,i+2));return {keyboard:[...rows,[menuLabels.jobs,menuLabels.quality],[menuLabels.login,menuLabels.help],[menuLabels.home]],resize_keyboard:true,is_persistent:true,input_field_placeholder:'发送视频后选位置；链接可先选分类'};}
 export const mainKeyboard=makeKeyboard();
 export function jobKeyboard(j){
  const buttons=[{text:'刷新进度',callback_data:'job:'+j.id}];
@@ -11,17 +11,17 @@ export function jobKeyboard(j){
  if(['failed','cancelled'].includes(j.state))buttons.push({text:'重新下载',callback_data:'retry:'+j.id});
  return {inline_keyboard:[buttons]};
 }
-export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,now=()=>Date.now()}){
+export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,help=helpText,now=()=>Date.now()}){
  const mainKeyboard=makeKeyboard(categories);
  const findCategory=id=>activeCategories(categories).find(c=>c.id===id);
- async function home(text='请选择下面的操作。点击下载分类后，按提示粘贴视频链接或转发视频即可。'){
+ async function home(text='请选择下面的操作。链接可先选择分类；视频直接转发，随后选择保存位置。'){
   state.awaitingLink=null;save();return send(text,{reply_markup:mainKeyboard});
  }
  async function prompt(category){
   const selected=findCategory(category);if(!selected)return home('该分类已停用或删除，请重新选择。');
   // Persist intent before sending; old prompts can never silently select another library.
   state.awaitingLink={category,expires:now()+15*60000,promptId:null};save();
-  const r=await send(`请发送要保存到「${selected.name}」的视频链接，或直接转发视频。\n一次最多 5 个链接；本次选择只用于下一条视频／链接消息（同一视频相册共用分类）。`,{reply_markup:{force_reply:true,input_field_placeholder:'发送链接或转发视频',selective:true}});
+  const r=await send(`请发送要保存到「${selected.name}」的视频链接，或直接转发视频。\n链接使用本次分类，最多 5 个。转发的视频会再次询问保存位置。`,{reply_markup:{force_reply:true,input_field_placeholder:'发送链接或转发视频',selective:true}});
   state.awaitingLink.promptId=r.message_id;
   state.linkPrompts=[...(state.linkPrompts||[]),r.message_id].slice(-30);save();
  }
@@ -44,7 +44,7 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
   if(text===menuLabels.jobs){await jobs();return true;}
   if(text===menuLabels.login){await send(statusText(await queue('platform-status')),{reply_markup:mainKeyboard});return true;}
   if(text===menuLabels.quality){await quality();return true;}
-  if(text===menuLabels.help){await send(helpText,{reply_markup:mainKeyboard});return true;}
+  if(text===menuLabels.help){await send(help,{reply_markup:mainKeyboard});return true;}
   return false;
  }
  async function resolveCategory(msg,parsed){

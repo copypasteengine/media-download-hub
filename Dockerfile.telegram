@@ -1,0 +1,7 @@
+# aiogram's multi-architecture build of the official tdlib Bot API 10.3.
+ARG TELEGRAM_IMAGE=aiogram/telegram-bot-api@sha256:d8395d368a1e357c6c082aca21e84f63878de62e70a0f92d7f6275fc8ee5e4ed
+FROM ${TELEGRAM_IMAGE}
+USER root
+RUN apk add --no-cache nodejs proxychains-ng
+COPY app/telegram-api-service.mjs /project/telegram-api-service.mjs
+ENTRYPOINT ["node", "/project/telegram-api-service.mjs"]

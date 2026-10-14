@@ -58,3 +58,7 @@ COMPOSE_PROJECT_NAME=nas-media-downloader
 为兼容已有加密备份，文件内部的 `nas-media-downloader/1` 格式标识暂时保留。这是兼容协议标记，不限制运行设备；新下载的备份文件名使用 `media-download-hub-backup-`。
 
 1.3.0 增强了下载完成文件的恢复校验。旧版若恰好在文件发布时中断、尚未记为完成，新版会因缺少完整身份信息重新下载并避让原文件名，不覆盖原文件；已完成任务不受影响。
+
+## 1.5.0 Telegram 大文件与保存位置选择
+
+升级前创建 `${STATE_ROOT}/telegram-api`（或 `.env` 显式设置已有 `TELEGRAM_CACHE_ROOT`），目录必须在你计划的缓存磁盘。Compose 新增内部 `telegram-api` 服务，未填写应用凭据时保持等待，不影响云 Bot。升级保留原账号、绑定、任务和分类。随后在后台填写 API ID / API Hash 并开启大文件开关；不要同时启动旧 Bot 实例。每次转发附件会询问保存分类，链接下载沿用原交互。具体限制见 [Telegram 视频](telegram-video.md)。

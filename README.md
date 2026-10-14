@@ -9,7 +9,7 @@ Cobalt 视频解析与下载、串行下载队列、Telegram / 飞书机器人�
 需要支持 Linux 容器的 Docker Engine 或 Docker Desktop，以及 Docker Compose v2。支持 ARM64 / AMD64 构建；ARM64 已在 RK3566 Linux 主机上验证，其它主机与 Docker Desktop 尚未做完整实机验证。Docker Desktop 的媒体目录需先授权文件共享。
 
 1. 将整个工程放到服务器，将 `.env.example` 复制为 `.env`。
-2. 在 `.env` 设置 `BIND_IP` 为服务器局域网 IP，`MEDIA_ROOT` 为已挂载的媒体目录，`STATE_ROOT` 为已创建的持久化任务目录。两个目录都必须存在，且容器有写权限。不要对整个媒体盘递归修改权限。
+2. 在 `.env` 设置 `BIND_IP` 为服务器局域网 IP，`MEDIA_ROOT` 为已挂载的媒体目录，`STATE_ROOT` 为已创建的持久化任务目录。另外创建 Telegram 缓存目录（默认为 `STATE_ROOT` 下的 `telegram-api`；可用 `TELEGRAM_CACHE_ROOT` 指向外接盘）。这些目录都必须存在，且容器有写权限。不要对整个媒体盘递归修改权限。
 3. 执行标准 Compose 命令：
 
    ```sh
@@ -17,11 +17,12 @@ Cobalt 视频解析与下载、串行下载队列、Telegram / 飞书机器人�
    ```
 
 4. 在可信局域网打开 `http://服务器IP:9072`，首次创建管理员。进入「下载分类」，用「浏览」选择保存文件夹，勾选确认存储位置并保存。Cobalt 入口自动识别，内部下载不依赖对外入口。
-5. 在后台配置本服务专用代理、导入平台 Cookie；在「机器人」填写凭据、启用并绑定本人账号。
+5. 在后台配置本服务专用代理、导入平台 Cookie；在「机器人」填写凭据、启用并绑定本人账号。Telegram 大文件下载在同页填写自己的 API ID / API Hash 并打开开关，无需修改 Compose 或登录个人账号。
+6. 转发 Telegram 视频后点击保存位置才会下载；同一相册选择一次。分类直接使用后台动态配置，重启保留待选择的视频。详见 [Telegram 视频](docs/telegram-video.md)。
 
 默认端口：9070 为 Cobalt 页面，9071 为兼容 API，9072 为管理后台。默认只绑定 127.0.0.1；按需调整 `.env`。管理后台包含账号与任务管理，不建议直接暴露为公网 HTTP。媒体公开入口的反向代理或 FRP 指向 9070。
 
-构建需要访问官方镜像仓库和 npm；可选浏览器还需要 Alpine 软件源。运行时代理通过网页配置，仅供本项目使用，不修改宿主机的全局代理。基础镜像锁定摘要，npm 使用 lockfile。
+构建需要访问官方镜像仓库和 npm；Telegram 大文件服务和可选浏览器还需要 Alpine 软件源。运行时代理通过网页配置，仅供本项目使用，不修改宿主机的全局代理。基础镜像锁定摘要，npm 使用 lockfile。
 
 ## 动态分类与路径映射
 

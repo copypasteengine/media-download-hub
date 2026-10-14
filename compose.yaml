@@ -3,7 +3,7 @@ x-logging: &logging
   driver: json-file
   options: {max-size: 5m, max-file: "2"}
 x-app: &app
-  image: media-download-hub:1.4.0
+  image: media-download-hub:1.5.0
   build:
     context: .
     args:
@@ -101,7 +101,30 @@ services:
         source: ${MEDIA_ROOT}
         target: ${DOWNLOADS_MOUNT:-/downloads}
         bind: {create_host_path: false}
+      - type: bind
+        source: ${TELEGRAM_CACHE_ROOT:-${STATE_ROOT}/telegram-api}
+        target: /telegram-data
+        bind: {create_host_path: false}
     depends_on: {manager: {condition: service_healthy}}
+  telegram-api:
+    <<: *app
+    image: media-download-hub-telegram:10.3-1
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+    command: []
+    mem_limit: 384m
+    cpus: 0.75
+    pids_limit: 96
+    environment: {NODE_OPTIONS: --max-old-space-size=64}
+    volumes:
+      - config:/config:ro
+      - status:/status
+      - type: bind
+        source: ${TELEGRAM_CACHE_ROOT:-${STATE_ROOT}/telegram-api}
+        target: /telegram-data
+        bind: {create_host_path: false}
+    depends_on: {proxy: {condition: service_started}}
   telegram:
     <<: *app
     command: [/project/app/runner.mjs, telegram]

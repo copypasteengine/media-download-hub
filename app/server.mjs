@@ -73,7 +73,9 @@ async function download(j,controller){
  try{
  let result,remote;
  if(j.sourceType==='telegram'){
-  const source=validateTelegramAttachment(j.telegramSource);
+  const source=validateTelegramAttachment(j.telegramSource,cfg.telegramFiles);
+  if(source.size>maxFile||storage(j.category).free-(source.size||0)*(cfg.telegramFiles?.local?2:1)<reserve)throw fail('文件过大或磁盘空间不足，无法保留下载缓存与成品');
+  if(cfg.telegramFiles?.local){if(!source.size)throw fail('大文件下载需要已知的文件大小，请重新转发原视频。');update(j,{total:source.size,stage:'Telegram 正在下载到缓存，完成后入库'});}
   telegramFile=await openTelegramFile(j.telegramSource,{...cfg.telegramFiles,signal:controller.signal});
   result={filename:source.filename,metadata:{title:source.title},mediaInfo:{resolution:source.width&&source.height?`${source.width}×${source.height}`:null,qualityLabel:'Telegram 提供的文件'}};
  }else{
@@ -93,7 +95,7 @@ async function download(j,controller){
  const filename=availableFilename(root,original,metadata,j.id);
  j.metadata=metadata;j.originalFilename=original;j.mediaInfo=result.mediaInfo||null;
  j.target=path.join(root,filename);j.partial=path.join(staging,j.id+'.part');
- update(j,{state:'downloading',filename});
+ update(j,{state:'downloading',filename,stage:null});
  const headerTimer=setTimeout(()=>controller.abort(fail('下载连接超过 90 秒未响应，请重试')),90000);
  let stream;
  try{stream=telegramFile?.response||await fetch(remote,{redirect:'error',signal:controller.signal});}finally{clearTimeout(headerTimer);}
@@ -101,14 +103,14 @@ async function download(j,controller){
  const type=stream.headers.get('content-type')||'';
  if(type.includes('json')||type.includes('text/html')){await stream.body.cancel();throw fail('上游返回了错误信息，未保存为视频');}
  const total=Number(stream.headers.get('content-length'))||telegramFile?.size||null;
- if(total&&(total>maxFile||(telegramFile&&total>TELEGRAM_CLOUD_LIMIT)||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail('文件超过 50 GiB 或媒体盘可用空间不足');}
+ if(total&&(total>maxFile||(telegramFile&&!telegramFile.local&&total>TELEGRAM_CLOUD_LIMIT)||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail('文件超过 50 GiB 或媒体盘可用空间不足');}
  update(j,{total});
  let lastChunk=Date.now(),lastCheck=0,lastPersist=Date.now();
  const watchdog=setInterval(()=>{if(Date.now()-lastChunk>120000)controller.abort(fail('下载超过两分钟没有数据，请重试'));},10000);
  const meter=new Transform({transform(chunk,encoding,cb){
   try{
    lastChunk=Date.now();j.bytes+=chunk.length;
-   if(telegramFile&&j.bytes>TELEGRAM_CLOUD_LIMIT)throw fail('视频超过 Telegram 官方接口的 20 MB 限制');
+   if(telegramFile&&!telegramFile.local&&j.bytes>TELEGRAM_CLOUD_LIMIT)throw fail('视频超过 Telegram 官方接口的 20 MB 限制');
    if(j.bytes>maxFile)throw fail('单个文件超过 50 GiB 限制');
    if(j.bytes-lastCheck>16*1024**2){storage(j.category);lastCheck=j.bytes;}
    if(Date.now()-lastPersist>15000){persist();lastPersist=Date.now();}
@@ -194,7 +196,7 @@ const server=http.createServer(async(req,res)=>{
    const data=await body(req), category=data.category||cfg.defaultCategory;
    if(categories.find(c=>c.id===category)?.private&&!user.private)throw fail('无权使用该分类',403);
    storage(category);
-   const source=data.source?validateTelegramAttachment(data.source):null;
+   const source=data.source?validateTelegramAttachment(data.source,cfg.telegramFiles):null;
    if(source){if(!cfg.telegramFiles?.token)throw fail('Telegram Bot 尚未启用');source.botId=cfg.telegramFiles.token.split(':')[0];}
    const url=source?'https://t.me/':inputUrl(data.url),quality=source?'original':String(data.quality||'1080');
    if(!source&&!['360','480','720','1080','1440','2160','max'].includes(quality))throw fail('不支持的清晰度');

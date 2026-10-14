@@ -11,3 +11,9 @@
 - Node.js、ffmpeg 及 Cobalt 官方镜像内依赖保持各自许可证。
 
 不要将实际 `.env`、Docker config 卷、平台 Cookie、备份解密密码、Bot 配对码或浏览器个人资料加入源代码发布包。
+
+## Telegram local Bot API
+
+- Official implementation: https://github.com/tdlib/telegram-bot-api (Boost Software License 1.0).
+- Container packaging: https://github.com/aiogram/telegram-bot-api, version 10.3; multi-architecture digest is pinned in `Dockerfile.telegram`.
+- ProxyChains-NG: https://github.com/rofl0r/proxychains-ng (GPL-2.0); installed via Alpine packages, confined to the Bot API process. Alpine packages include their package/license metadata.
