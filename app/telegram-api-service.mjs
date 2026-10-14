@@ -6,31 +6,39 @@ import {lookup} from 'node:dns/promises';
 import {spawn} from 'node:child_process';
 const root='/telegram-data',config='/config/settings.json';
 const read=(p,fallback=null)=>{try{return JSON.parse(fs.readFileSync(p,'utf8'));}catch{return fallback;}};
-let child,signature='',busy=false,stopping=false,active=null,retryAt=0,state='starting',settings;
+let child,signature='',busy=false,stopping=false,active=null,retryAt=0,state='starting',settings,stopPending,resetPending,proxyAddress='',proxyChecked=0;
 function status(value){state=value;try{const p='/status/telegram-api.json';fs.writeFileSync(p+'.new',JSON.stringify({role:'telegram-api',state,updatedAt:new Date().toISOString()}),{mode:0o600});fs.renameSync(p+'.new',p);}catch{}}
 function prune(all=false){
  const walk=p=>{for(const e of fs.readdirSync(p,{withFileTypes:true})){const f=path.join(p,e.name);if(e.isSymbolicLink())continue;if(e.isDirectory())walk(f);else if(e.isFile()&&(all||Date.now()-fs.statSync(f).mtimeMs>86400000))fs.unlinkSync(f);}};
  if(fs.existsSync(root+'/files'))walk(root+'/files');
 }
 async function stop(){
+ if(stopPending)return stopPending;
  if(!child)return;const p=child;child=null;
- await new Promise(resolve=>{const t=setTimeout(()=>p.kill('SIGKILL'),5000);p.once('exit',()=>{clearTimeout(t);resolve();});p.kill('SIGTERM');});
+ stopPending=new Promise(resolve=>{const t=setTimeout(()=>p.kill('SIGKILL'),5000);p.once('exit',()=>{clearTimeout(t);resolve();});p.kill('SIGTERM');});
+ try{await stopPending;}finally{stopPending=null;}
 }
-async function reset(){await stop();prune(true);retryAt=Date.now()+1000;}
+async function reset(){
+ if(resetPending)return resetPending;
+ resetPending=(async()=>{await stop();prune(true);retryAt=Date.now()+1000;})();
+ try{await resetPending;}finally{resetPending=null;}
+}
 async function tick(){
- if(busy||stopping)return;busy=true;
+ if(busy||stopping||resetPending)return;busy=true;
  try{
   settings=read(config);const t=settings?.telegram;
   if(fs.existsSync('/config/maintenance')){await stop();status('maintenance');return;}
   // Keep an already configured server available during local -> cloud logout.
   if(!t?.apiId||!t?.apiHash||!t.token){await stop();status('disabled');return;}
-  const sig=JSON.stringify([t.apiId,t.apiHash,t.token]);
+  const route=read('/status/telegram-route.json');
+  if(!t.local&&!(route?.mode==='local'&&route.botId===t.token.split(':')[0])){await stop();status('disabled');return;}
+  if(!proxyAddress||Date.now()-proxyChecked>30000){proxyAddress=(await lookup('proxy',{family:4})).address;proxyChecked=Date.now();}
+  const sig=JSON.stringify([t.apiId,t.apiHash,t.token,proxyAddress]);
   if(sig!==signature){await stop();signature=sig;retryAt=0;}
   if(!child&&Date.now()>retryAt){
    for(const d of ['db','files','temp'])fs.mkdirSync(root+'/'+d,{recursive:true,mode:0o700});
    prune();
-   const proxy=await lookup('proxy',{family:4});
-   fs.writeFileSync('/tmp/proxychains.conf',`strict_chain\nquiet_mode\nproxy_dns\ntcp_read_time_out 15000\ntcp_connect_time_out 10000\nlocalnet 127.0.0.0/255.0.0.0\n[ProxyList]\nhttp ${proxy.address} 1080\n`,{mode:0o600});
+   fs.writeFileSync('/tmp/proxychains.conf',`strict_chain\nquiet_mode\nproxy_dns\ntcp_read_time_out 15000\ntcp_connect_time_out 10000\nlocalnet 127.0.0.0/255.0.0.0\n[ProxyList]\nhttp ${proxyAddress} 1080\n`,{mode:0o600});
    child=spawn('proxychains4',['-q','-f','/tmp/proxychains.conf','/usr/local/bin/telegram-bot-api','--local','--http-ip-address=127.0.0.1','--http-port=8082',`--dir=${root}/db`,`--files-dir=${root}/files`,`--temp-dir=${root}/temp`,'--verbosity=0','--memory-verbosity=0','--max-connections=256'],{env:{...process.env,TELEGRAM_API_ID:String(t.apiId),TELEGRAM_API_HASH:t.apiHash},stdio:'ignore'});
    const p=child;p.on('error',()=>{});p.once('exit',()=>{if(child===p)child=null;retryAt=Date.now()+10000;});
   }
