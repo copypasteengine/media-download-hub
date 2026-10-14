@@ -1,0 +1,36 @@
+name: Checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: runtime/app/package-lock.json
+      - run: npm ci --ignore-scripts --prefix runtime/app
+      - run: npm run check
+      - run: npm test
+      - name: Check Python syntax
+        run: python3 -c "import ast,pathlib; ast.parse(pathlib.Path('browser/server.py').read_text())"
+      - name: Validate standard and optional-browser Compose configurations
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example --profile browser-login config --quiet

@@ -1,0 +1,155 @@
+name: ${COMPOSE_PROJECT_NAME:-media-download-hub}
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 5m, max-file: "2"}
+x-app: &app
+  image: media-download-hub:1.3.0
+  build:
+    context: .
+    args:
+      NODE_IMAGE: ${NODE_IMAGE:-node@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5}
+      COBALT_IMAGE: ${COBALT_IMAGE:-ghcr.io/imputnet/cobalt@sha256:63186dd68afd57ce3bb1f62cc4c139f5fa95b9c3e87a3cf5c6e4c7a570523f62}
+  init: true
+  restart: unless-stopped
+  read_only: true
+  user: "0:0"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logging
+  tmpfs: ["/tmp:size=32m,mode=1777"]
+  stop_grace_period: 20s
+  pids_limit: 64
+services:
+  manager:
+    <<: *app
+    command: [/project/manager/server.mjs]
+    ports: ["${BIND_IP:-127.0.0.1}:${ADMIN_PORT:-9072}:9090"]
+    mem_limit: 256m
+    cpus: 0.5
+    cap_add: [DAC_OVERRIDE]
+    environment:
+      BROWSER_LOGIN_ENABLED: ${BROWSER_LOGIN_ENABLED:-false}
+      WEB_PORT: ${WEB_PORT:-9070}
+      MEDIA_ROOT: ${DOWNLOADS_MOUNT:-/downloads}
+      STORAGE_NAME: ${STORAGE_NAME:-下载存储}
+      STORAGE_ROOTS: ${STORAGE_ROOTS:-}
+    volumes:
+      - config:/config
+      - status:/status
+      - type: bind
+        source: ${STATE_ROOT:?Set STATE_ROOT to an existing persistent state directory}
+        target: /state
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${MEDIA_ROOT:?Set MEDIA_ROOT to your mounted media disk}
+        target: ${DOWNLOADS_MOUNT:-/downloads}
+        bind: {create_host_path: false}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  cobalt:
+    <<: *app
+    image: media-download-hub-cobalt:11.7.1
+    build:
+      context: .
+      dockerfile: Dockerfile.cobalt
+      args:
+        COBALT_IMAGE: ${COBALT_IMAGE:-ghcr.io/imputnet/cobalt@sha256:63186dd68afd57ce3bb1f62cc4c139f5fa95b9c3e87a3cf5c6e4c7a570523f62}
+    entrypoint: [node, /project/app/runner.mjs, api]
+    command: []
+    mem_limit: 512m
+    cpus: 1.25
+    pids_limit: 128
+    environment: {NODE_OPTIONS: --max-old-space-size=256}
+    volumes: [config:/config:ro, status:/status]
+  proxy:
+    <<: *app
+    command: [/project/app/runner.mjs, proxy]
+    mem_limit: 144m
+    cpus: 0.5
+    environment: {GOMEMLIMIT: 64MiB, NODE_OPTIONS: --max-old-space-size=32}
+    volumes: [config:/config:ro, status:/status]
+  web:
+    <<: *app
+    command: [/project/app/web.mjs]
+    mem_limit: 96m
+    cpus: 0.25
+    ports: ["${BIND_IP:-127.0.0.1}:${WEB_PORT:-9070}:8080", "${BIND_IP:-127.0.0.1}:${API_PORT:-9071}:8081"]
+    volumes: [config:/config:ro]
+  queue:
+    <<: *app
+    command: [/project/app/runner.mjs, queue]
+    mem_limit: 224m
+    cpus: 0.5
+    cap_add: [DAC_OVERRIDE]
+    environment:
+      NODE_OPTIONS: --max-old-space-size=96
+      SERVICE_STATE_DIR: /state/queue
+      MEDIA_ROOT: ${DOWNLOADS_MOUNT:-/downloads}
+      STORAGE_NAME: ${STORAGE_NAME:-下载存储}
+      STORAGE_ROOTS: ${STORAGE_ROOTS:-}
+    volumes:
+      - config:/config:ro
+      - status:/status
+      - type: bind
+        source: ${STATE_ROOT}
+        target: /state
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${MEDIA_ROOT}
+        target: ${DOWNLOADS_MOUNT:-/downloads}
+        bind: {create_host_path: false}
+    depends_on: {manager: {condition: service_healthy}}
+  telegram:
+    <<: *app
+    command: [/project/app/runner.mjs, telegram]
+    mem_limit: 160m
+    cpus: 0.25
+    environment: {NODE_OPTIONS: --max-old-space-size=64, SERVICE_STATE_DIR: /state/queue}
+    volumes:
+      - config:/config:ro
+      - status:/status
+      - type: bind
+        source: ${STATE_ROOT}
+        target: /state
+        bind: {create_host_path: false}
+    depends_on: {manager: {condition: service_healthy}}
+  feishu:
+    <<: *app
+    command: [/project/app/runner.mjs, feishu]
+    mem_limit: 288m
+    cpus: 0.25
+    environment: {NODE_OPTIONS: --max-old-space-size=128, SERVICE_STATE_DIR: /state/feishu}
+    volumes:
+      - config:/config:ro
+      - status:/status
+      - type: bind
+        source: ${STATE_ROOT}
+        target: /state
+        bind: {create_host_path: false}
+    depends_on: {manager: {condition: service_healthy}}
+  browser:
+    profiles: [browser-login]
+    image: media-download-hub-browser:1.0.0
+    build:
+      context: ./browser
+      args:
+        COBALT_IMAGE: ${COBALT_IMAGE:-ghcr.io/imputnet/cobalt@sha256:63186dd68afd57ce3bb1f62cc4c139f5fa95b9c3e87a3cf5c6e4c7a570523f62}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: 0.75
+    pids_limit: 192
+    shm_size: 128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    logging: *logging
+    # No host ports, Docker socket, configuration or media mounts.
+volumes:
+  config:
+  status:

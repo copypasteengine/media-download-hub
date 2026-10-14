@@ -1,0 +1,19 @@
+{
+  "name": "media-download-hub",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "license": "AGPL-3.0-only",
+  "description": "Self-hosted media downloads with Cobalt, Telegram, Feishu and a web management console",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/copypasteengine/media-download-hub.git"
+  }
+}

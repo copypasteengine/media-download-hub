@@ -1,0 +1,7 @@
+{
+  "version": "26.3.27",
+  "source": "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip",
+  "sha256": "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c",
+  "image_id": "sha256:61b90ca760f61f7ba7b862226af8e1b87c7efe641fd6844f110689a958bde581",
+  "build_dir": "/vol4/1000/.maintenance/CobaltBuild/xray"
+}

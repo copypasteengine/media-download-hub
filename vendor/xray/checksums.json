@@ -1,0 +1,8 @@
+{
+  "version": "26.3.27",
+  "amd64_zip_sha256": "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae",
+  "binaries": {
+    "arm64": "c2d20a7045250497083afea0d79db0672f6c89a25aaaf37c92de034d6b764b04",
+    "amd64": "8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed"
+  }
+}

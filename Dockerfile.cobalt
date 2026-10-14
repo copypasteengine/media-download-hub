@@ -1,0 +1,16 @@
+# Dedicated Cobalt API image, based on the official pinned multi-architecture release.
+ARG COBALT_IMAGE=ghcr.io/imputnet/cobalt@sha256:63186dd68afd57ce3bb1f62cc4c139f5fa95b9c3e87a3cf5c6e4c7a570523f62
+FROM ${COBALT_IMAGE}
+USER root
+COPY runtime/youtube/package*.json /youtube-runtime/
+RUN cd /youtube-runtime && npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY app/runner.mjs app/categories.mjs app/storage.mjs /project/app/
+COPY manager/core.mjs /project/manager/core.mjs
+COPY patches/internal.js /app/src/stream/internal.js
+COPY patches/bilibili.js patches/youtube.js patches/youtube-account.js /app/src/processing/services/
+COPY patches/request.js /app/src/processing/request.js
+COPY patches/match.js /app/src/processing/match.js
+COPY patches/match-action.js /app/src/processing/match-action.js
+WORKDIR /app
+ENTRYPOINT ["node", "/project/app/runner.mjs", "api"]
+CMD []

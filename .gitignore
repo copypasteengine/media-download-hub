@@ -1,0 +1,24 @@
+# Deployment configuration and runtime data
+.env
+.env.*
+!.env.example
+/config/
+/state/
+/secrets/
+/downloads/
+/backups/
+/private.json
+/*-private.json
+*.backup.json
+*.pem
+*.key
+cookies.txt
+cookies.json
+# Dependencies, local tooling and temporary output
+node_modules/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+/coverage/
+/test-results/

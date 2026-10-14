@@ -1,0 +1,8 @@
+{
+  "name": "nas-cobalt-youtube-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "youtubei.js": "18.1.0"
+  }
+}

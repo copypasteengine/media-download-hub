@@ -1,0 +1,10 @@
+.git
+.env
+*.backup.json
+**/node_modules
+vendor/cobalt-source
+config
+state
+secrets
+tests
+docs
