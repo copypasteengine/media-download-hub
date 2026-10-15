@@ -3,7 +3,7 @@ x-logging: &logging
   driver: json-file
   options: {max-size: 5m, max-file: "2"}
 x-app: &app
-  image: media-download-hub:1.6.2
+  image: media-download-hub:1.6.3
   build:
     context: .
     args:
@@ -51,7 +51,7 @@ services:
       retries: 3
   cobalt:
     <<: *app
-    image: media-download-hub-cobalt:11.7.1
+    image: media-download-hub-cobalt:11.7.1-2
     build:
       context: .
       dockerfile: Dockerfile.cobalt

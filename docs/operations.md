@@ -2,6 +2,8 @@
 
 1.6.2 的审查范围、修复与验证记录见 [项目审查](review-1.6.2.md)。升级应统一重建 manager、queue、telegram、feishu、web、proxy，避免应用服务混用旧镜像；Cobalt 和 Telegram Bot API 保留各自版本号。
 
+1.6.3 修复部分 YouTube 音轨拒绝分段请求、导致合并输出空文件或截断文件的问题。匿名解析默认使用 VisionOS 播放接口（客户端参数参考 yt-dlp 2026.08.19），避免旧 Android VR / iOS 通道只返回开头可读的音轨；账号限制内容仍保留原登录态解析路线。Cobalt 镜像更新为 `media-download-hub-cobalt:11.7.1-2`，遇到 403 会逐级缩小分段，并校验每段的范围和实际字节数。合并启用 FFmpeg 严格错误处理，只有进程成功退出才正常结束 HTTP 响应，防止将可播放的开头误当成完整文件。YouTube VP9/AV1 若仍返回空流，或经验证的合并通道中途断开，会额外尝试一次 H.264 版本；不会重试用户取消、磁盘写入错误等情况，实际分辨率继续显示在任务中。此版本需要同时重建 Cobalt 和应用镜像。
+
 ## 首次部署
 
 克隆仓库，在工程目录复制 `.env.example` 为 `.env`，设置已存在的 `MEDIA_ROOT` 与 `STATE_ROOT` 以及监听地址。再执行：

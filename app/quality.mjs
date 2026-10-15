@@ -26,3 +26,8 @@ export function codecFallback(options, result) {
   }
   return null;
 }
+export function emptyStreamFallback(job, failedCodec) {
+  let host;try{host=new URL(job.url).hostname.toLowerCase();}catch{return null;}
+  if(job.sourceType==='telegram'||!['vp9','av1'].includes(failedCodec)||!['youtu.be','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'].includes(host))return null;
+  return {...downloadOptions(job),youtubeVideoCodec:'h264',youtubeVideoContainer:'auto'};
+}

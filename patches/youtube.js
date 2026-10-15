@@ -8,6 +8,7 @@ import { Innertube, Platform, Session } from "youtubei.js";
 import { env } from "../../config.js";
 import { getCookie } from "../cookie/manager.js";
 import { getYouTubeSession } from "../helpers/youtube-session.js";
+import {visionOSPlayerRequest} from "./youtube-client.js";
 
 // https://github.com/LuanRT/YouTube.js/pull/1052
 Platform.shim.eval = async (data) => {
@@ -64,7 +65,7 @@ const hlsCodecList = {
     }
 }
 
-const clientsWithNoCipher = ['IOS', 'ANDROID', 'ANDROID_VR', 'YTSTUDIO_ANDROID', 'YTMUSIC_ANDROID'];
+const clientsWithNoCipher = ['VISIONOS', 'IOS', 'ANDROID', 'ANDROID_VR', 'YTSTUDIO_ANDROID', 'YTMUSIC_ANDROID'];
 
 const videoQualities = [144, 240, 360, 480, 720, 1080, 1440, 2160, 4320];
 
@@ -198,7 +199,7 @@ async function download(o) {
     const quality = o.quality === "max" ? 9000 : Number(o.quality);
 
     let useHLS = o.youtubeHLS;
-    let innertubeClient = o.innertubeClient || env.customInnertubeClient || ((quality > 1080 && o.codec !== "h264") ? "ANDROID_VR" : "IOS");
+    let innertubeClient = o.innertubeClient || env.customInnertubeClient || "VISIONOS";
 
     // HLS playlists from the iOS client don't contain the av1 video format.
     if (useHLS && o.codec === "av1") {
@@ -250,7 +251,7 @@ async function download(o) {
                 );
 
                 return fetch(request, {
-                    ...init,
+                    ...(innertubeClient === 'VISIONOS' ? visionOSPlayerRequest(url, init) : init),
                     dispatcher: o.dispatcher
                 });
             },
@@ -269,7 +270,7 @@ async function download(o) {
 
     let info;
     try {
-        info = await yt.getBasicInfo(o.id, { client: innertubeClient });
+        info = await yt.getBasicInfo(o.id, { client: innertubeClient === 'VISIONOS' ? 'IOS' : innertubeClient });
     } catch (e) {
         if (e?.info) {
             let errorInfo;

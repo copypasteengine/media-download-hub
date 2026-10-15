@@ -3,54 +3,13 @@ import { Readable } from "node:stream";
 import { closeRequest, getHeaders, pipe } from "./shared.js";
 import { handleHlsPlaylist, isHlsResponse, probeInternalHLSTunnel } from "./internal-hls.js";
 
-const CHUNK_SIZE = BigInt(8e6); // 8 MB
-const min = (a, b) => a < b ? a : b;
+import {readRangeChunks} from "./range-stream.js";
 
 const serviceNeedsChunks = new Set(["youtube", "vk"]);
-
-async function* readChunks(streamInfo, size) {
-    // YouTube rejects large ranges on some CDN/formats; 1 MiB works consistently.
-    const chunkSize = streamInfo.service === "youtube" ? 1048576n : CHUNK_SIZE;
-    let read = 0n, chunksSinceTransplant = 0;
-    while (read < size) {
-        if (streamInfo.controller.signal.aborted) {
-            throw new Error("controller aborted");
-        }
-
-        const chunk = await request(streamInfo.url, {
-            headers: {
-                ...getHeaders(streamInfo.service),
-                Range: `bytes=${read}-${min(read + chunkSize - 1n, size - 1n)}`
-            },
-            dispatcher: streamInfo.dispatcher,
-            signal: streamInfo.controller.signal,
-            maxRedirections: 4
-        });
-
-        if (chunk.statusCode === 403 && chunksSinceTransplant >= 3 && streamInfo.transplant) {
-            chunksSinceTransplant = 0;
-            try {
-                await streamInfo.transplant(streamInfo.dispatcher);
-                continue;
-            } catch {}
-        }
-
-        chunksSinceTransplant++;
-
-        const expected = min(chunkSize, size - read);
-        const received = BigInt(chunk.headers['content-length']);
-
-        if (received < expected / 2n) {
-            closeRequest(streamInfo.controller);
-        }
-
-        for await (const data of chunk.body) {
-            yield data;
-        }
-
-        read += received;
-    }
-}
+const readChunks = (streamInfo, size) => readRangeChunks(streamInfo, size, {
+    request, getHeaders,
+    onResize: bytes => console.info(JSON.stringify({event:'youtube-range-reduced',bytes}))
+});
 
 async function handleChunkedStream(streamInfo, res) {
     const { signal } = streamInfo.controller;

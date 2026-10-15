@@ -17,9 +17,13 @@ test('persistent queue, isolation, cancel, broken stream and safe paths',async t
   if(req.method==='POST'){
    let raw='';for await(const b of req)raw+=b;const d=JSON.parse(raw);assert.equal(d.alwaysProxy,true);assert.equal(d.localProcessing,'disabled');requests++;
    const id=new URL(d.url).pathname.slice(1);res.setHeader('Content-Type','application/json');
-   return res.end(JSON.stringify({status:'tunnel',filename:'../../unsafe.mp4',metadata:id==='one'?{title:'采集到的视频标题',artist:'作者'}:undefined,url:(id==='ssrf'?'http://127.0.0.1:1':mockURL)+'/tunnel?id='+id}));
+   const streamId=id==='empty-vp9'?(d.youtubeVideoCodec==='h264'?'recovered':'empty'):id==='interrupted-vp9'?(d.youtubeVideoCodec==='h264'?'recovered':'mux-broken'):id==='always-empty'?'empty':id;
+   return res.end(JSON.stringify({status:'tunnel',filename:'../../unsafe.mp4',mediaInfo:{codec:d.youtubeVideoCodec},metadata:id==='one'?{title:'采集到的视频标题',artist:'作者'}:undefined,url:(id==='ssrf'?'http://127.0.0.1:1':mockURL)+'/tunnel?id='+streamId}));
   }
-  const id=new URL(req.url,'http://test').searchParams.get('id');res.writeHead(200,{'Content-Type':'video/mp4','Content-Length':id==='broken'?payload.length*2:payload.length});
+  const id=new URL(req.url,'http://test').searchParams.get('id');
+  if(id==='empty'){res.writeHead(200,{'Content-Type':'video/mp4','Content-Length':'0'});return res.end();}
+  if(id==='mux-broken'){res.writeHead(200,{'Content-Type':'video/mp4','X-Cobalt-Verified-Mux':'1'});res.write(payload);return setTimeout(()=>res.destroy(),50);}
+  res.writeHead(200,{'Content-Type':'video/mp4','Content-Length':id==='broken'?payload.length*2:payload.length});
   if(id==='broken'){res.write(payload);return setTimeout(()=>res.destroy(),50);}
   if(id.startsWith('slow')){let n=0;const timer=setInterval(()=>{res.write(payload.subarray(n,n+1024));n+=1024;if(n>=payload.length){clearInterval(timer);res.end();}},80);res.on('close',()=>clearInterval(timer));return;}
   res.end(payload);
@@ -47,6 +51,12 @@ test('persistent queue, isolation, cancel, broken stream and safe paths',async t
  assert.equal((await submit('one',normal)).duplicate,true);
  fs.unlinkSync(path.join(dir,'normal',done.filename));
  const replacement=await submit('one',normal);assert.notEqual(replacement.job.id,first.job.id);assert.equal(replacement.duplicate,undefined);await until(replacement.job.id,'completed',normal);
+ const empty=await call('jobs','POST',{url:'https://youtu.be/empty-vp9',category:'normal',quality:'max'},normal);
+ const fallbackDone=await until(empty.data.job.id,'completed',normal);assert.equal(fallbackDone.attempts,2);assert.equal(fallbackDone.mediaInfo.codec,'h264');assert.equal(fallbackDone.codecFallback.reason,'empty-stream');assert.equal(fallbackDone.bytes,payload.length);
+ const always=await call('jobs','POST',{url:'https://youtu.be/always-empty',category:'normal',quality:'max'},normal);
+ const stillEmpty=await until(always.data.job.id,'failed',normal);assert.equal(stillEmpty.attempts,2);assert.match(stillEmpty.error,/空文件/);
+ const interrupted=await call('jobs','POST',{url:'https://youtu.be/interrupted-vp9',category:'normal',quality:'max'},normal);
+ const retried=await until(interrupted.data.job.id,'completed',normal);assert.equal(retried.attempts,2);assert.equal(retried.codecFallback.reason,'interrupted-stream');assert.equal(retried.bytes,payload.length);
  const pj=await submit('private',priv,'private');await until(pj.job.id,'completed',priv);
  assert.ok(!(await call('jobs','GET',undefined,normal)).data.jobs.some(x=>x.category==='private'));
  assert.equal((await call('jobs/'+pj.job.id+'/cancel','POST',{},normal)).status,404);

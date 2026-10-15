@@ -7,7 +7,7 @@ import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {spawn} from 'node:child_process';
 import {validateTelegramAttachment,openTelegramFile,TELEGRAM_CLOUD_LIMIT} from './telegram-files.mjs';
-import {downloadOptions, downloadError, codecFallback} from './quality.mjs';
+import {downloadOptions, downloadError, codecFallback,emptyStreamFallback} from './quality.mjs';
 import {availableFilename,alreadyPublished,publishFile} from './naming.mjs';
 import {activeStates,ensureQueueCapacity,canAccessJob,completedFileExists} from './queue-policy.mjs';
 import {volumeIdentity,stagingDirectory} from './storage-guard.mjs';
@@ -64,11 +64,11 @@ function verifyMedia(file,signal){
   p.on('exit',code=>{clearTimeout(timer);code===0?resolve():reject(fail('媒体文件检查失败，请重试下载'));});
  });
 }
-async function download(j,controller){
+async function download(j,controller,options=downloadOptions(j),fallbackReason=null){
  const {root,staging}=storage(j.category);
  if(alreadyPublished(j)){removePartial(j);update(j,{state:'completed',error:null});return;}
  removePartial(j);
- update(j,{state:'resolving',bytes:0,total:null,error:null,attempts:(j.attempts||0)+1});
+ update(j,{state:'resolving',bytes:0,total:null,error:null,codecFallback:fallbackReason,stage:fallbackReason?'原编码传输异常，正在尝试 H.264 兼容版本':null,attempts:(j.attempts||0)+1});
  let telegramFile;
  try{
  let result,remote;
@@ -80,10 +80,9 @@ async function download(j,controller){
   result={filename:source.filename,metadata:{title:source.title,artist:source.artist},mediaInfo:{resolution:source.width&&source.height?`${source.width}×${source.height}`:null,qualityLabel:'Telegram 提供的文件'}};
  }else{
  const resolve=options=>fetch(cfg.apiInternal,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(options),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(90000)])});
- const options=downloadOptions(j);
  let response=await resolve(options);result=await response.json();
  const fallback=codecFallback(options,result);
- if(fallback){response=await resolve(fallback);result=await response.json();}
+ if(fallback){options=fallback;response=await resolve(options);result=await response.json();}
  if(!response.ok||result.status==='error')throw fail(downloadError(result.error?.code||response.status));
  if(result.status==='picker')throw fail('此链接包含多张图片或多个媒体，请在原 Cobalt 页面选择单项；下载队列目前接收单个视频');
  if(result.status!=='tunnel')throw fail('此资源未生成单个视频通道，请使用原 Cobalt 页面下载');
@@ -118,8 +117,13 @@ async function download(j,controller){
   }catch(e){cb(e);}
  }});
  try{await pipeline(stream.body,meter,fs.createWriteStream(j.partial,{flags:'wx',mode:0o600}),{signal:controller.signal});}
+ catch(e){
+  if(!controller.signal.aborted&&stream.headers.get('x-cobalt-verified-mux')==='1'&&e.cause?.code==='UND_ERR_SOCKET')throw Object.assign(fail('上游媒体合并中断，文件未下载完整'),{code:'INTERRUPTED_MEDIA_STREAM',codec:result.mediaInfo?.codec||options.youtubeVideoCodec});
+  throw e;
+ }
  finally{clearInterval(watchdog);}
- if(!j.bytes||(total&&j.bytes!==total)||(telegramFile?.size&&j.bytes!==telegramFile.size))throw fail('文件未下载完整，请重试');
+ if(!j.bytes)throw Object.assign(fail('上游返回了空文件，未收到视频数据；请稍后重试'),{code:'EMPTY_MEDIA_STREAM',codec:result.mediaInfo?.codec||options.youtubeVideoCodec});
+ if((total&&j.bytes!==total)||(telegramFile?.size&&j.bytes!==telegramFile.size))throw fail('文件未下载完整，请重试');
  update(j,{state:'checking'});
  if(j.sourceType!=='telegram'||['video','audio'].includes(validateTelegramAttachment(j.telegramSource,cfg.telegramFiles).kind))await verifyMedia(j.partial,controller.signal);
  if(controller.signal.aborted)throw fail('任务已取消');
@@ -135,7 +139,14 @@ async function kick(){
  if(worker||stopping)return;
  const j=jobs.find(x=>x.state==='queued');if(!j)return;
  const controller=new AbortController();worker={id:j.id,controller};
- try{await download(j,controller);}
+ try{
+  try{await download(j,controller);}
+  catch(e){
+   const fallback=['EMPTY_MEDIA_STREAM','INTERRUPTED_MEDIA_STREAM'].includes(e.code)&&!controller.signal.aborted?emptyStreamFallback(j,e.codec):null;
+   if(!fallback)throw e;
+   await download(j,controller,fallback,{from:e.codec,to:'h264',reason:e.code==='EMPTY_MEDIA_STREAM'?'empty-stream':'interrupted-stream'});
+  }
+ }
  catch(e){
   try{removePartial(j);}catch{}
   const safeError=j.sourceType==='telegram'&&!e.safeForUser&&!/^[\u3400-\u9fff]/.test(e.message||'')?'Telegram 文件下载失败，请重试或检查服务状态。':e.message;

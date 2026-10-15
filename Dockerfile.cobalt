@@ -7,7 +7,10 @@ RUN cd /youtube-runtime && npm ci --omit=dev --ignore-scripts && npm cache clean
 COPY app/runner.mjs app/categories.mjs app/storage.mjs /project/app/
 COPY manager/core.mjs /project/manager/core.mjs
 COPY patches/internal.js /app/src/stream/internal.js
+COPY patches/range-stream.js /app/src/stream/range-stream.js
+COPY patches/ffmpeg.js patches/mux-output.js /app/src/stream/
 COPY patches/bilibili.js patches/youtube.js patches/youtube-account.js /app/src/processing/services/
+COPY patches/youtube-client.js /app/src/processing/services/
 COPY patches/request.js /app/src/processing/request.js
 COPY patches/match.js /app/src/processing/match.js
 COPY patches/match-action.js /app/src/processing/match-action.js

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {downloadOptions,downloadError,codecFallback} from '../app/quality.mjs';
+import {downloadOptions,downloadError,codecFallback,emptyStreamFallback} from '../app/quality.mjs';
 import {jobText} from '../app/telegram-core.mjs';
 const source=fs.readFileSync(new URL('../patches/bilibili.js',import.meta.url),'utf8')
  .replace(/^import .*;\n/gm,'');
@@ -31,6 +31,12 @@ test('unsupported high-resolution codec falls back; login errors are not retried
  assert.equal(codecFallback(options,{error:{code:'error.api.youtube.no_matching_format'}}).youtubeVideoCodec,'h264');
  assert.equal(codecFallback(options,{error:{code:'error.api.youtube.login'}}),null);
  assert.equal(codecFallback({...options,youtubeVideoCodec:'h264'},{error:{code:'error.api.youtube.no_matching_format'}}),null);
+});
+test('empty-stream fallback is limited to YouTube VP9/AV1 and retains the requested quality',()=>{
+ const job={url:'https://youtu.be/test-video',quality:'max'};
+ assert.equal(emptyStreamFallback(job,'vp9').youtubeVideoCodec,'h264');assert.equal(emptyStreamFallback(job,'av1').videoQuality,'max');
+ assert.equal(emptyStreamFallback(job,'h264'),null);assert.equal(emptyStreamFallback({...job,sourceType:'telegram'},'vp9'),null);
+ assert.equal(emptyStreamFallback({...job,url:'https://youtube.com.evil.example/test'},'vp9'),null);
 });
 test('Bilibili login is sent only to playback APIs; part and resolution are respected',async()=>{
  const fixture='const env={durationLimit:3600};const readFileSync=()=>JSON.stringify({cookie:"SESSDATA=test-session"});\n'+source;
