@@ -38,7 +38,7 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
   const selected=findCategory(category);if(!selected)return home('该分类已停用或删除，请重新选择。');
   // Persist intent before sending; old prompts can never silently select another library.
   state.awaitingLink={category,expires:now()+15*60000,promptId:null};save();
-  const r=await send(`请发送要保存到「${selected.name}」的视频链接，或直接转发视频。\n链接使用本次分类，最多 5 个。转发的视频会再次询问保存位置。`,{reply_markup:{force_reply:true,input_field_placeholder:'发送链接或转发视频',selective:true}});
+  const r=await send(`请发送要保存到「${selected.name}」的视频链接，或直接转发文件。\n链接使用本次分类，最多 5 个。非视频附件会优先推荐此分类，仍需确认；视频会再次询问位置。`,{reply_markup:{force_reply:true,input_field_placeholder:'发送链接或转发附件',selective:true}});
   state.awaitingLink.promptId=r.message_id;
   state.linkPrompts=[...(state.linkPrompts||[]),r.message_id].slice(-30);save();
  }

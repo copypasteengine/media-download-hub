@@ -5,7 +5,7 @@ export function cleanLabel(value){return String(value||'').normalize('NFC').repl
 function fit(text,budget){let out='';for(const c of text){if(Buffer.byteLength(out+c)>budget)break;out+=c;}return out.trim();}
 export function mediaFilename(original,metadata={},suffix=''){
  const extension=path.extname(String(original)).toLowerCase();
- if(!/^\.[a-z0-9]{2,5}$/.test(extension))throw Error('Invalid media extension');
+ if(!/^\.[a-z0-9]{1,16}$/.test(extension))throw Error('Invalid media extension');
  const title=cleanLabel(typeof metadata.title==='string'?metadata.title:''),artist=cleanLabel(typeof metadata.artist==='string'?metadata.artist:'');
  let stem=title?(title+(artist&&artist!==title?' - '+artist:'')):cleanLabel(path.basename(String(original).replaceAll('\\','/'),path.extname(String(original))));
  if(!stem)stem='video';

@@ -7,13 +7,14 @@ test('Telegram attachment queue saves bytes, isolates private categories, dedupl
  const token='123456789:abcdefghijklmnopqrstuvwxyz',payload='test-video-file-bytes';
  const salt='fixture-salt',credential={salt,hash:crypto.scryptSync('fixture-password',salt,32).toString('hex')};
  const cfg={stateDir:dir+'/state',categories:['media','private'].map(id=>({id,name:id,path:dir+'/'+id,volumeId:'test-volume',ready:true,enabled:true,private:id==='private'})),defaultCategory:'media',reserveBytes:0,maxFileBytes:1024**2,users:{owner:{...credential,private:true},ordinary:{...credential,private:false}},telegramFiles:{token},apiInternal:'http://127.0.0.1:1/',apiPublic:'http://cobalt:9000'};
+ fs.writeFileSync(dir+'/probe.sh','#!/bin/sh\necho checked >> '+dir+'/media-probes\n');fs.chmodSync(dir+'/probe.sh',0o700);cfg.ffmpeg=dir+'/probe.sh';
  fs.writeFileSync(dir+'/config.json',JSON.stringify(cfg));
  // Mock only Telegram transport; real queue HTTP, auth, streaming, publication and state are exercised.
  fs.writeFileSync(dir+'/mock.mjs',`import fs from 'node:fs';const original=globalThis.fetch;
  globalThis.fetch=async(url,options={})=>{
   if(!String(url).startsWith('https://api.telegram.org/'))return original(url,options);
   if(String(url).endsWith('/getFile')){const d=JSON.parse(options.body);fs.appendFileSync(${JSON.stringify(dir+'/requests')},d.file_id+'\\n');return Response.json({ok:true,result:{file_path:'videos/'+d.file_id+'.mp4',file_size:${payload.length}}});}
-  const broken=String(url).includes('broken');return new Response(broken?'short':${JSON.stringify(payload)},{headers:{'content-type':'video/mp4','content-length':String(${payload.length})}});
+  const broken=String(url).includes('broken');return new Response(broken?'short':${JSON.stringify(payload)},{headers:{'content-type':String(url).includes('generic')?'application/json':'video/mp4','content-length':String(${payload.length})}});
  };`);
  const sock=http.createServer();await new Promise(r=>sock.listen(0,'127.0.0.1',r));const port=sock.address().port;await new Promise(r=>sock.close(r));
  let log='';const proc=spawn(process.execPath,['--import',dir+'/mock.mjs','app/server.mjs'],{cwd:new URL('../',import.meta.url),env:{...process.env,PORT:String(port),QUEUE_CONFIG:dir+'/config.json'},stdio:['ignore','pipe','pipe']});proc.stderr.on('data',b=>log+=b);
@@ -36,4 +37,13 @@ test('Telegram attachment queue saves bytes, isolates private categories, dedupl
  assert.equal(fs.readdirSync(dir+'/media/.cobalt-partials').length,0);
  await call('jobs/'+broken.data.job.id+'/retry',{},owner);await until(broken.data.job.id,'failed');
  assert.equal(fs.readFileSync(dir+'/requests','utf8').split('\n').filter(x=>x==='broken_12345').length,2);
+ const probes=fs.readFileSync(dir+'/media-probes','utf8');
+ for(const [extension,kind]of [['pdf','document'],['jpg','image'],['7z','file'],['json','file']]){
+  const r=await call('jobs',{source:{...source,fileId:'generic_'+extension,uniqueId:'unique_'+extension,filename:'original.'+extension,title:''},category:'media'},owner);
+  assert.equal(r.status,201);const j=await until(r.data.job.id,'completed');assert.equal(j.attachmentKind,kind);assert.equal(j.filename,'original.'+extension);assert.equal(fs.readFileSync(dir+'/media/'+j.filename,'utf8'),payload);
+ }
+ assert.equal(fs.readFileSync(dir+'/media-probes','utf8'),probes,'non-media files must never be passed to ffmpeg');
+ const audio=await call('jobs',{source:{...source,fileId:'music_1234',uniqueId:'music_unique',filename:'track.flac',title:'曲名',artist:'作者'},category:'media'},owner);
+ const song=await until(audio.data.job.id,'completed');assert.equal(song.filename,'曲名 - 作者.flac');assert.equal(song.attachmentKind,'audio');assert(fs.readFileSync(dir+'/media-probes','utf8').length>probes.length);
+
 });

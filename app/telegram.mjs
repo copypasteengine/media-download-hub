@@ -21,7 +21,7 @@ const sleep=ms=>new Promise(r=>{const done=()=>{clearTimeout(t);shutdown.signal.
 function save(){const tmp=statePath+'.new';fs.writeFileSync(tmp,JSON.stringify(state),{mode:0o600});const fd=fs.openSync(tmp,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,statePath);}
 const transport=createTelegramTransport({token:cfg.token,local:!!cfg.local,makeProxy:()=>new ProxyAgent(cfg.proxy||'http://proxy:1080'),signal:shutdown.signal,onFailure:detail=>console.log('Telegram transport failure '+JSON.stringify(detail))});
 const telegram=transport.request;
-const currentHelp=cfg.local?helpText.replace('当前官方 Bot 接口限单个视频 20 MB。较大文件需要自建 Bot API。','已启用大文件服务，单文件大小及磁盘保留空间按后台设置执行。'):helpText;
+const currentHelp=cfg.local?helpText.replace('当前官方 Bot 接口限单个文件 20 MB。较大文件需要自建 Bot API。','已启用大文件服务，单文件大小及磁盘保留空间按后台设置执行。'):helpText;
 async function queue(route,method='GET',data,retried=false){
  if(!session){const r=await fetch(cfg.queueUrl+'/nas/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:cfg.queueUsername,password:cfg.queuePassword}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('下载队列登录失败');const cookie=r.headers.get('set-cookie')?.split(';')[0];const me=await fetch(cfg.queueUrl+'/nas/api/me',{headers:{Cookie:cookie},signal:AbortSignal.timeout(10000)}).then(r=>r.json());session={cookie,csrf:me.csrf};}
  const r=await fetch(cfg.queueUrl+'/nas/api/'+route,{method,headers:{Cookie:session.cookie,'X-CSRF-Token':session.csrf,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(15000)});
@@ -58,7 +58,7 @@ async function handle(update){
 
  for(const [i,url] of parsed.urls.entries()){
   try{
-   if(telegramPostLink(url)){await send('这是 Telegram 消息链接。请在 Telegram 打开该消息，直接把视频转发给我；仅凭链接无法读取频道或私聊的视频。');continue;}
+   if(telegramPostLink(url)){await send('这是 Telegram 消息链接。请在 Telegram 打开该消息，直接把附件转发给我；仅凭链接无法读取频道或私聊的文件。');continue;}
    const r=await queue('jobs','POST',{url,quality:state.quality,category,requestId:`tg:${update.update_id}:${i}`});
    state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();
    await ui.showJob(r.job,(r.duplicate?'此任务已存在，没有重复下载。':'已加入下载队列，可关闭 Telegram。')+'\n');

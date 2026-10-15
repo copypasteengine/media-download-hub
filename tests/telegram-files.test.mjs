@@ -11,7 +11,7 @@ test('forwarded video takes precedence over caption URLs or commands and preserv
  assert.equal(parseMessage({...msg,caption:'/cancel 12345678'}).command,'download');
  assert.equal(telegramAttachment({document:{...media,file_name:'clip.MKV'}}).filename,'clip.MKV');
  assert(telegramAttachment({video_note:{...media,length:320}}).filename.endsWith('.mp4'));
- assert.throws(()=>telegramAttachment({document:{...media,file_name:'notes.pdf',mime_type:'application/pdf'}}),/不是支持的视频/);
+ assert.equal(telegramAttachment({document:{...media,file_name:'notes.pdf',mime_type:'application/pdf'}}).kind,'document');
  assert.throws(()=>telegramAttachment({video:{...media,file_size:TELEGRAM_CLOUD_LIMIT+1}}),/20 MB/);
  assert.throws(()=>validateTelegramAttachment({...telegramAttachment(msg),fileId:'../../secret'}),/信息不完整/);
 });
@@ -42,4 +42,15 @@ test('download failures are actionable and cannot expose token or unsafe paths',
  await assert.rejects(()=>openTelegramFile(source,{token,signal:signal(),fetchImpl:async()=>Response.json({ok:true,result:{file_path:'../secret'}})}),/无效文件路径/);
  assert(telegramPostLink('https://t.me/example/123'));assert(!telegramPostLink('https://t.me.evil.example/123'));
  const text=jobText({id:'abcd1234',state:'queued',sourceType:'telegram',quality:'original',url:'https://t.me/',bytes:0});assert(text.includes('不转码'));assert(!text.includes('originalp'));
+});
+
+test('photos select the largest variant and documents, music, voice and arbitrary files preserve their formats',()=>{
+ const photo=telegramAttachment({photo:[{...media,file_id:'large_photo',width:1600,height:1200},{...media,file_id:'small_photo',width:320,height:240}],message_id:9,date:1700000000});
+ assert.equal(photo.fileId,'large_photo');assert.equal(photo.kind,'image');assert(photo.filename.endsWith('.jpg'));
+ for(const [filename,kind]of [['book.epub','document'],['notes.docx','document'],['music.flac','audio'],['photo.png','image'],['backup.7z','file'],['clip.mkv','video']]){const parsed=telegramAttachment({document:{...media,file_name:filename},caption:'caption should not rename documents'});assert.equal(parsed.kind,kind);assert.equal(parsed.filename,filename);if(['document','audio','file'].includes(kind))assert.equal(parsed.title,'');}
+ const audio=telegramAttachment({audio:{...media,file_name:'track.mp3',title:'曲名',performer:'作者'}});assert.equal(audio.artist,'作者');assert.equal(audio.title,'曲名');assert.equal(audio.kind,'audio');
+ assert.equal(telegramAttachment({voice:{file_id:'voice_123',file_unique_id:'voice_unique',file_size:20}}).filename.endsWith('.ogg'),true);
+ assert.equal(telegramAttachment({document:{...media,file_name:'README',mime_type:'application/octet-stream'}}).filename,'README.bin');
+ assert.equal(validateTelegramAttachment({...photo,filename:'file.pdf',kind:'video'}).kind,'document');
+ assert(!jobText({id:'abcd1234',state:'queued',sourceType:'telegram',attachmentKind:'document',filename:'book.pdf',bytes:0}).includes('画质'));
 });
