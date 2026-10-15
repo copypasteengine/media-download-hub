@@ -11,15 +11,32 @@ export function createForwardFlow({state,save,send,telegram,queue,categories,sho
  const buttons=p=>{const recommended=choices().find(c=>c.id===p.preferredCategory)||recommendedCategory(choices(),p.kind);const list=choices().sort((a,b)=>Number(b.id===recommended?.id)-Number(a.id===recommended?.id)).map(c=>({text:(c.id===recommended?.id?'推荐 · ':'')+c.name,callback_data:`forward:${p.id}:${c.id}`})),rows=[];for(let i=0;i<list.length;i+=2)rows.push(list.slice(i,i+2));rows.push([{text:'不保存',callback_data:`forward:${p.id}:_cancel`}]);return {inline_keyboard:rows};};
  async function submit(p){
   const category=choices().find(c=>c.id===p.category);
-  if(!category){await send('已选择的分类已停用或删除，本组附件未继续下载。请重新转发后选择新的分类。');return;}
+  if(!category){await send('已选择的分类已停用或删除，本组内容未继续下载。请重新发送后选择新的分类。');return;}
   let added=0;
   for(const item of p.items){
    if(item.jobId)continue;
-   const r=await queue('jobs','POST',{source:item.source,category:p.category,requestId:item.requestId});
+   const input=item.url?{url:item.url,quality:item.quality}:{source:item.source};
+   const r=await queue('jobs','POST',{...input,category:p.category,requestId:item.requestId});
    item.jobId=r.job.id;state.watches||={};state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();added++;
    if(showJob)await showJob(r.job,(r.duplicate?'任务已存在：':'已加入下载队列：')+'\n');
   }
-  if(added)await send(`已将附件加入「${category.name}」下载队列。视频仍每次询问位置，其它附件按后台规则处理。`);
+  if(added)await send(`已将${p.kind==='link'?'视频链接':'附件'}加入「${category.name}」下载队列。`);
+ }
+ async function receiveLinks(msg,urls,updateId,{excess=false}={}){
+  const all=requests();for(const [id,p]of Object.entries(all))if(p.expires<now())delete all[id];
+  const id=crypto.createHash('sha256').update('links:'+updateId).digest('hex').slice(0,12);
+  let p=all[id];
+  if(!p){
+   if(Object.keys(all).length>=50){await send('待选择位置的请求过多，请先处理已有保存提示。');return;}
+   p=all[id]={id,kind:'link',items:urls.map((url,i)=>({url,quality:state.quality,requestId:`tg:${updateId}:${i}`})),expires:now()+24*3600000,category:null,promptSent:false};
+  }
+  state.awaitingLink=null;save();
+  if(p.cancelled)return;
+  if(p.category){await submit(p);return;}
+  if(!p.promptSent){
+   const r=await send(`收到 ${p.items.length} 个视频链接，请选择保存位置。选择前不会开始下载；本条消息中的链接共用一次选择。此提示 24 小时内有效。${excess?'\n仅处理前 5 个链接，其余请另行发送。':''}`,{reply_markup:buttons(p)});
+   p.messageId=r?.message_id;p.promptSent=true;save();
+  }
  }
  async function receive(msg,source,updateId){
   const all=requests();for(const [id,p]of Object.entries(all))if(p.expires<now())delete all[id];
@@ -46,14 +63,14 @@ export function createForwardFlow({state,save,send,telegram,queue,categories,sho
   if(!ownerAllowed(state.owner,{...q.message,from:q.from}))return true;
   await telegram('answerCallbackQuery',{callback_query_id:q.id}).catch(()=>{});
   const p=requests()[match[1]],category=match[2];
-  if(!p||p.expires<now()||p.cancelled){await send('这条保存提示已结束或过期，请重新转发附件。');return true;}
-  if(p.category&&p.category!==category){await send('这组附件已经选择了保存位置。要取消下载，请打开「我的下载」。');return true;}
-  if(category==='_cancel'){p.cancelled=true;save();await send('这组转发附件不保存。');return true;}
-  if(!choices().some(c=>c.id===category)){await send('这个分类已停用或删除，请重新转发后选择当前分类。');return true;}
+  if(!p||p.expires<now()||p.cancelled){await send('这条保存提示已结束或过期，请重新发送链接或转发附件。');return true;}
+  if(p.category&&p.category!==category){await send('这组内容已经选择了保存位置。要取消下载，请打开「我的下载」。');return true;}
+  if(category==='_cancel'){p.cancelled=true;save();await send('这组内容不保存。');return true;}
+  if(!choices().some(c=>c.id===category)){await send('这个分类已停用或删除，请重新发送后选择当前分类。');return true;}
   p.category=category;save();
   try{await submit(p);await telegram('editMessageReplyMarkup',{chat_id:q.message.chat.id,message_id:q.message.message_id,reply_markup:{inline_keyboard:[]}}).catch(()=>{});}
-  catch(e){if(!e.permanent)throw e;await send('部分附件未能入队，请检查任务列表后重试：'+e.message);}
+  catch(e){if(!e.permanent)throw e;await send('部分内容未能入队，请检查任务列表后重试：'+e.message);}
   return true;
  }
- return {receive,callback};
+ return {receive,receiveLinks,callback};
 }

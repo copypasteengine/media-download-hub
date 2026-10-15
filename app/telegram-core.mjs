@@ -8,7 +8,7 @@ export const helpText=`视频链接：点击下载分类后发送链接。Telegr
 🔑 登录状态：查看平台登录是否有效
 ↩️ 返回主菜单：取消本次分类选择
 
-链接分类选择 15 分钟有效，每次最多 5 个链接；直接发送链接使用默认分类。每次转发视频都会询问保存位置，选择前不下载；同一视频相册共用一次选择，保存提示 24 小时有效。菜单更新后请使用新按钮，旧分类不会自动转投其它目录。
+链接分类选择 15 分钟有效，每次最多 5 个链接；直接发送链接会询问保存位置。每次转发视频或视频链接都会重新询问保存位置，选择前不下载；同一条消息的链接或同一视频相册共用一次选择，保存提示 24 小时有效。菜单更新后请使用新按钮，旧分类不会自动转投其它目录。
 Telegram 附件直接保存收到的文件，不重新转码；当前官方 Bot 接口限单个文件 20 MB。较大文件需要自建 Bot API。频道消息链接请改为直接转发附件。
 支持 /menu、/download、/status、/cancel、/retry、/quality；分类命令别名由后台配置。支持的平台范围取决于 Cobalt。`;
 export function parseMessage(msg,{categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,local=false}={}){
@@ -21,7 +21,7 @@ export function parseMessage(msg,{categories=DEFAULT_CATEGORIES,defaultCategory=
  if(command&&command!=='download'&&!selected)return {command,argument};
  const textLinks=(msg.entities||msg.caption_entities||[]).filter(e=>e.type==='text_link').map(e=>e.url);
  const urls=[...new Set([...textLinks,...(text.match(/https?:\/\/[^\s<>"\u3000]+/g)||[])].map(u=>u.replace(/[。，、；！）】]+$/g,'')))];
- return {command:'download',category:selected?.id||defaultCategory,explicitCategory:!!command,urls:urls.slice(0,5),excess:urls.length>5};
+ return {command:'download',category:selected?.id||defaultCategory,explicitCategory:!!selected,urls:urls.slice(0,5),excess:urls.length>5};
 }
 export function ownerAllowed(owner,msg){return !!owner&&msg?.chat?.type==='private'&&String(msg.from?.id)===String(owner.userId)&&String(msg.chat.id)===String(owner.chatId)&&!msg.from?.is_bot;}
 export function canPair(code,msg){return !msg?.from?.is_bot&&msg?.chat?.type==='private'&&msg.from?.id===msg.chat.id&&parseMessage(msg).command==='start'&&parseMessage(msg).argument===code;}

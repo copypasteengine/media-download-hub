@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import {createForwardFlow} from './telegram-forward.mjs';
 import {migrateTelegramMode} from './telegram-mode.mjs';
 import {read,atomic} from '../manager/core.mjs';
-import {telegramPostLink} from './telegram-files.mjs';
+import {handleVideoLinks} from './telegram-links.mjs';
 import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
 import {createRequire} from 'node:module';
@@ -54,17 +54,7 @@ async function handle(update){
  }
  if(!parsed.attachment&&!parsed.urls.length){if(state.awaitingLink||parsed.explicitCategory)await ui.prompt(parsed.explicitCategory?parsed.category:state.awaitingLink.category);else await ui.home();return;}
  if(parsed.attachment){await forwards.receive(msg,parsed.attachment,update.update_id);return;}
- const category=await ui.resolveCategory(msg,parsed);if(!category)return;
-
- for(const [i,url] of parsed.urls.entries()){
-  try{
-   if(telegramPostLink(url)){await send('这是 Telegram 消息链接。请在 Telegram 打开该消息，直接把附件转发给我；仅凭链接无法读取频道或私聊的文件。');continue;}
-   const r=await queue('jobs','POST',{url,quality:state.quality,category,requestId:`tg:${update.update_id}:${i}`});
-   state.watches[r.job.id]={lastState:r.job.state,notified:['completed','failed','cancelled'].includes(r.job.state)};save();
-   await ui.showJob(r.job,(r.duplicate?'此任务已存在，没有重复下载。':'已加入下载队列，可关闭 Telegram。')+'\n');
-  }catch(e){if(!e.permanent)throw e;await send('无法提交：'+e.message);}
- }
- await ui.home(parsed.excess?'已处理前 5 个链接。其余请重新选择分类后发送。':'本次链接已处理。可以点菜单继续添加，或查看下载任务。');
+ await handleVideoLinks({msg,parsed,updateId:update.update_id,ui,forwards,queue,state,save,send});
 }
 async function notify(){
  if(notifying||!state.owner||stopping)return;notifying=true;
@@ -83,7 +73,7 @@ async function main(){
  const me=await telegram('getMe');
  fs.writeFileSync((process.env.SERVICE_STATE_DIR||'/state/queue')+'/bot-info.json',JSON.stringify({username:me.username,id:me.id}),{mode:0o600});
  const webhook=await telegram('getWebhookInfo');if(webhook.url)throw Error('该 Bot 已设置 webhook，请使用专用新 Bot，避免干扰现有应用');
- await telegram('setMyCommands',{commands:[{command:'menu',description:'显示操作按钮'},{command:'download',description:'下载到默认分类'},{command:'help',description:'使用说明'},{command:'status',description:'查看下载任务'},{command:'quality',description:'设置后续任务清晰度'},{command:'cancel',description:'取消任务'},{command:'retry',description:'重试失败任务'}]});
+ await telegram('setMyCommands',{commands:[{command:'menu',description:'显示操作按钮'},{command:'download',description:'发送链接并选择保存位置'},{command:'help',description:'使用说明'},{command:'status',description:'查看下载任务'},{command:'quality',description:'设置后续任务清晰度'},{command:'cancel',description:'取消任务'},{command:'retry',description:'重试失败任务'}]});
  if(state.owner&&state.menuVersion!==menuVersion){await ui.resetMenu();state.menuVersion=menuVersion;save();}
  console.log('Telegram bot ready; owner '+(state.owner?'bound':'awaiting pairing'));
  const timer=setInterval(notify,8000);timer.unref();
