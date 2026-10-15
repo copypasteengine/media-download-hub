@@ -45,6 +45,8 @@ test('persistent queue, isolation, cancel, broken stream and safe paths',async t
  const first=await submit('one',normal);const done=await until(first.job.id,'completed',normal);
  assert.equal(done.bytes,payload.length);assert.equal(done.filename,'采集到的视频标题 - 作者.mp4');assert.deepEqual(fs.readFileSync(path.join(dir,'normal',done.filename)),payload);
  assert.equal((await submit('one',normal)).duplicate,true);
+ fs.unlinkSync(path.join(dir,'normal',done.filename));
+ const replacement=await submit('one',normal);assert.notEqual(replacement.job.id,first.job.id);assert.equal(replacement.duplicate,undefined);await until(replacement.job.id,'completed',normal);
  const pj=await submit('private',priv,'private');await until(pj.job.id,'completed',priv);
  assert.ok(!(await call('jobs','GET',undefined,normal)).data.jobs.some(x=>x.category==='private'));
  assert.equal((await call('jobs/'+pj.job.id+'/cancel','POST',{},normal)).status,404);
@@ -66,4 +68,10 @@ test('persistent queue, isolation, cancel, broken stream and safe paths',async t
  const uninterrupted=await until(hot.job.id,'completed',normal);assert.equal(uninterrupted.attempts,1);
  const course=await until(added.job.id,'completed',normal);assert.equal(course.categoryName,'课程');assert.deepEqual(fs.readFileSync(path.join(dir,'courses',course.filename)),payload);assert.equal(requests,downloadsBefore+1);
  assert.ok(requests>=7);
+ // Hot-reloaded permissions and credentials must apply to sessions already logged in.
+ cfg.users.r18.private=false;fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify(cfg));proc.kill('SIGHUP');await sleep(100);
+ assert.equal((await call('jobs','GET',undefined,priv)).data.jobs.length,0);
+ assert.equal((await call('jobs/'+pj.job.id+'/retry','POST',{},priv)).status,404);
+ cfg.users.r18.hash=crypto.scryptSync('changed-secret',cfg.users.r18.salt,32).toString('hex');fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify(cfg));proc.kill('SIGHUP');await sleep(100);
+ assert.equal((await call('me','GET',undefined,priv)).status,401);
 });

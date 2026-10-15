@@ -9,6 +9,8 @@ import {spawn} from 'node:child_process';
 import {validateTelegramAttachment,openTelegramFile,TELEGRAM_CLOUD_LIMIT} from './telegram-files.mjs';
 import {downloadOptions, downloadError, codecFallback} from './quality.mjs';
 import {availableFilename,alreadyPublished,publishFile} from './naming.mjs';
+import {activeStates,ensureQueueCapacity,canAccessJob,completedFileExists} from './queue-policy.mjs';
+import {volumeIdentity,stagingDirectory} from './storage-guard.mjs';
 
 const cfg=JSON.parse(fs.readFileSync(process.env.QUEUE_CONFIG||'/run/queue/config.json','utf8'));
 const stateDir=cfg.stateDir||'/state', dbFile=path.join(stateDir,'jobs.json');
@@ -16,7 +18,6 @@ let categories=cfg.categories;
 let roots=Object.fromEntries(categories.map(c=>[c.id,c.path]));
 let reserve=cfg.reserveBytes??20*1024**3, maxFile=cfg.maxFileBytes??50*1024**3;
 const loginMonitor=startLoginMonitor({stateDir});
-const activeStates=new Set(['queued','resolving','downloading','checking']);
 let jobs=fs.existsSync(dbFile)?JSON.parse(fs.readFileSync(dbFile,'utf8')):[];
 let worker=null, stopping=false;
 const sessions=new Map(), attempts=new Map();
@@ -29,12 +30,11 @@ function persist(){
 }
 function storage(category){
  const item=categories.find(c=>c.id===category&&c.enabled!==false);if(!item?.ready)throw fail('该分类未就绪，请在管理后台确认存储路径');const root=roots[category];if(!root)throw fail('无效的保存分类');
- if(fs.readFileSync(path.join(root,'.cobalt-volume'),'utf8').trim()!==item.volumeId)throw fail('媒体盘不可用，请检查挂载');
+ if(volumeIdentity(root)!==item.volumeId)throw fail('媒体盘不可用，请检查挂载');
  const stat=fs.statfsSync(root);
  if(item.fsType && Number(stat.type)!==item.fsType)throw fail('媒体盘挂载类型不符，已停止写入');
- if(stat.bavail*stat.bsize<reserve)throw fail('媒体盘剩余空间不足，保留至少 20 GiB');
- const staging=path.join(root,'.cobalt-partials');
- fs.mkdirSync(staging,{recursive:true,mode:0o700});
+ if(stat.bavail*stat.bsize<reserve)throw fail(`媒体盘剩余空间不足，需保留 ${(reserve/1024**3).toFixed(1)} GiB`);
+ const staging=stagingDirectory(root);
  return {root,staging,free:stat.bavail*stat.bsize};
 }
 function inputUrl(raw){
@@ -50,7 +50,7 @@ function internalTunnel(raw){
  return new URL('/tunnel'+u.search,cfg.apiInternal).href;
 }
 function publicJob(j){
- return {...Object.fromEntries(Object.entries(j).filter(([k])=>!['target','partial','cancelRequested','telegramSource','publishing'].includes(k))),categoryName:j.categoryName||categories.find(c=>c.id===j.category)?.name||j.category,private:j.private??categories.find(c=>c.id===j.category)?.private??false};
+ return {...Object.fromEntries(Object.entries(j).filter(([k])=>!['target','partial','cancelRequested','telegramSource','publishing'].includes(k))),categoryName:j.categoryName||categories.find(c=>c.id===j.category)?.name||j.category,private:!!j.private||!!categories.find(c=>c.id===j.category)?.private};
 }
 function update(j,values){Object.assign(j,values,{updatedAt:now()});persist();}
 function removePartial(j){if(j.partial){try{fs.unlinkSync(j.partial);}catch(e){if(e.code!=='ENOENT')throw e;}}}
@@ -103,7 +103,7 @@ async function download(j,controller){
  const type=stream.headers.get('content-type')||'';
  if(!telegramFile&&(type.includes('json')||type.includes('text/html'))){await stream.body.cancel();throw fail('上游返回了错误信息，未保存为视频');}
  const total=Number(stream.headers.get('content-length'))||telegramFile?.size||null;
- if(total&&(total>maxFile||(telegramFile&&!telegramFile.local&&total>TELEGRAM_CLOUD_LIMIT)||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail('文件超过 50 GiB 或媒体盘可用空间不足');}
+ if(total&&(total>maxFile||(telegramFile&&!telegramFile.local&&total>TELEGRAM_CLOUD_LIMIT)||storage(j.category).free-total<reserve)){await stream.body.cancel();throw fail(`文件超过 ${(maxFile/1024**3).toFixed(1)} GiB 或媒体盘可用空间不足`);}
  update(j,{total});
  let lastChunk=Date.now(),lastCheck=0,lastPersist=Date.now();
  const watchdog=setInterval(()=>{if(Date.now()-lastChunk>120000)controller.abort(fail('下载超过两分钟没有数据，请重试'));},10000);
@@ -111,7 +111,7 @@ async function download(j,controller){
   try{
    lastChunk=Date.now();j.bytes+=chunk.length;
    if(telegramFile&&!telegramFile.local&&j.bytes>TELEGRAM_CLOUD_LIMIT)throw fail('文件超过 Telegram 官方接口的 20 MB 限制');
-   if(j.bytes>maxFile)throw fail('单个文件超过 50 GiB 限制');
+   if(j.bytes>maxFile)throw fail(`单个文件超过 ${(maxFile/1024**3).toFixed(1)} GiB 限制`);
    if(j.bytes-lastCheck>16*1024**2){storage(j.category);lastCheck=j.bytes;}
    if(Date.now()-lastPersist>15000){persist();lastPersist=Date.now();}
    cb(null,chunk);
@@ -147,7 +147,9 @@ for(const j of jobs){if(['resolving','downloading','checking'].includes(j.state)
 persist();
 function session(req){
  const token=(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('cobalt_queue='))?.slice(13);
- const s=sessions.get(token);if(!s||s.expires<Date.now()){if(token)sessions.delete(token);return null;}return s;
+ const s=sessions.get(token),current=s?cfg.users[s.username]:null;
+ if(!s||s.expires<Date.now()||!current||s.authHash!==current.hash||s.authSalt!==current.salt){if(token)sessions.delete(token);return null;}
+ s.private=!!current.private;return s;
 }
 function json(res,status,data,headers={}){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(data));}
 async function body(req){
@@ -175,7 +177,7 @@ const server=http.createServer(async(req,res)=>{
    const hash=await new Promise((resolve,reject)=>crypto.scrypt(String(data.password||''),salt,32,(e,k)=>e?reject(e):resolve(k)));
    if(!user||!crypto.timingSafeEqual(hash,Buffer.from(user.hash,'hex')))throw fail('账号或密码不正确',401);
    bucket.n=0;const token=crypto.randomBytes(32).toString('hex'),csrf=crypto.randomBytes(24).toString('hex');
-   sessions.set(token,{username,private:!!user.private,csrf,expires:Date.now()+7*86400000});
+   sessions.set(token,{username,private:!!user.private,authHash:user.hash,authSalt:user.salt,csrf,expires:Date.now()+7*86400000});
    const secure=req.headers['x-forwarded-proto']==='https'?'; Secure':'';
    return json(res,200,{ok:true},{'Set-Cookie':`cobalt_queue=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure}`});
   }
@@ -190,7 +192,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(pathname==='/nas/api/jobs'&&req.method==='GET'){
    let disk;try{disk={ok:true,free:storage(cfg.defaultCategory).free};}catch(e){disk={ok:false,error:e.message};}
-   return json(res,200,{disk,jobs:jobs.filter(j=>j.owner===user.username).map(publicJob).reverse()});
+   return json(res,200,{disk,jobs:jobs.filter(j=>canAccessJob(j,user,categories)).map(publicJob).reverse()});
   }
   if(pathname==='/nas/api/jobs'&&req.method==='POST'){
    const data=await body(req), category=data.category||cfg.defaultCategory;
@@ -201,15 +203,15 @@ const server=http.createServer(async(req,res)=>{
    const url=source?'https://t.me/':inputUrl(data.url),quality=source?'original':String(data.quality||'1080');
    if(!source&&!['360','480','720','1080','1440','2160','max'].includes(quality))throw fail('不支持的清晰度');
    const requestId=typeof data.requestId==='string'?data.requestId.slice(0,120):null;
-   const existing=jobs.find(j=>j.owner===user.username&&((requestId&&j.requestId===requestId)||((source?j.sourceType==='telegram'&&j.telegramSource?.uniqueId===source.uniqueId&&j.telegramSource?.botId===source.botId:j.sourceType!=='telegram'&&j.url===url)&&j.category===category&&j.quality===quality&&(activeStates.has(j.state)||j.state==='completed'))));
+   const existing=jobs.find(j=>canAccessJob(j,user,categories)&&((requestId&&j.requestId===requestId)||((source?j.sourceType==='telegram'&&j.telegramSource?.uniqueId===source.uniqueId&&j.telegramSource?.botId===source.botId:j.sourceType!=='telegram'&&j.url===url)&&j.category===category&&j.quality===quality&&(activeStates.has(j.state)||completedFileExists(j,roots[category])))));
    if(existing)return json(res,200,{job:publicJob(existing),duplicate:true});
-   if(jobs.filter(j=>activeStates.has(j.state)).length>=50)throw fail('队列已满，请等待现有任务完成',429);
+   ensureQueueCapacity(jobs);
    const j={id:crypto.randomUUID(),owner:user.username,requestId,url,quality,...(source?{sourceType:'telegram',attachmentKind:source.kind,telegramSource:source,metadata:{title:source.title,artist:source.artist},filename:source.filename}:{}),category,categoryName:categories.find(c=>c.id===category).name,private:!!categories.find(c=>c.id===category).private,state:'queued',bytes:0,total:null,createdAt:now(),updatedAt:now(),attempts:0};
    jobs.push(j);persist();setTimeout(kick,0);return json(res,201,{job:publicJob(j)});
   }
   const match=pathname.match(/^\/nas\/api\/jobs\/([a-f0-9-]{36})\/(cancel|retry)$/);
   if(match&&req.method==='POST'){
-   const j=jobs.find(j=>j.id===match[1]&&j.owner===user.username);if(!j)throw fail('找不到任务',404);
+   const j=jobs.find(j=>j.id===match[1]&&canAccessJob(j,user,categories));if(!j)throw fail('找不到任务',404);
    if(match[2]==='cancel'){
     if(activeStates.has(j.state)){
      if(worker?.id===j.id){j.cancelRequested=true;worker.controller.abort(fail('已取消'));}
@@ -217,6 +219,7 @@ const server=http.createServer(async(req,res)=>{
     }
    }else{
     if(!['failed','cancelled'].includes(j.state))throw fail('只能重试失败或取消的任务');
+    ensureQueueCapacity(jobs);
     storage(j.category);j.cancelRequested=false;update(j,{state:'queued',bytes:0,total:null,error:null});setTimeout(kick,0);
    }
    return json(res,200,{job:publicJob(j)});

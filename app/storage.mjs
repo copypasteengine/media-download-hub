@@ -17,7 +17,7 @@ export function relativePath(value) {
 }
 export function safeDirectory(root,relative='.') {
   relativePath(relative);
-  if(!fs.existsSync(root)||!fs.statSync(root).isDirectory())throw Error('存储位置当前不可用，请检查磁盘挂载');
+  if(!fs.existsSync(root)||!fs.lstatSync(root).isDirectory())throw Error('存储位置当前不可用，或使用了符号链接，请检查磁盘挂载');
   let target=root;
   for(const part of relative==='.'?[]:relative.split('/')) {
     target=path.join(target,part);
@@ -32,6 +32,17 @@ export function categoryPath(category,roots=storageRoots()) {
   const root=roots.find(r=>r.id===(category.storageId||'main'));
   if(!root)throw Error('原存储位置未挂载，请重新选择目录');
   return safeDirectory(root.path,category.path);
+}
+export function validateStorageSeparation(categories,roots=storageRoots()) {
+  const paths=categories.map(c=>{
+    categoryPath(c,roots);
+    const root=roots.find(r=>r.id===(c.storageId||'main'));
+    return path.resolve(fs.realpathSync(root.path),c.path);
+  });
+  for(let i=0;i<paths.length;i++)for(let j=i+1;j<paths.length;j++){
+    if(paths[i]===paths[j]||paths[i].startsWith(paths[j]+'/')||paths[j].startsWith(paths[i]+'/'))throw Error('不同存储位置中的分类目录不能重叠或互相嵌套');
+    if(fs.existsSync(paths[i])&&fs.existsSync(paths[j])){const a=fs.statSync(paths[i]),b=fs.statSync(paths[j]);if(a.dev===b.dev&&a.ino===b.ino)throw Error('两个分类指向同一个实际目录');}
+  }
 }
 export function browseDirectory(roots,id,relative='.') {
   const root=roots.find(r=>r.id===id);if(!root)throw Error('存储位置不存在');

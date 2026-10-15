@@ -20,7 +20,7 @@ export function normalizedAction(data,{categories=DEFAULT_CATEGORIES}={}){
  const messageId=c.open_message_id||data.open_message_id;
  if(!userId||!chatId||!messageId||!v)return null;
  if(v.kind==='menu'&&![...Object.values(menuLabels),...activeCategories(categories).map(categoryLabel)].includes(v.label))return null;
- if(v.kind==='callback'&&!/^(?:quality:(?:360|480|720|1080|1440|2160|max)|jobs:\d{1,6}|(?:job|cancel|retry):[a-f0-9-]{36})$/.test(v.data||''))return null;
+ if(v.kind==='callback'&&!/^(?:menu:(?:open|close|jobs|quality|login|help|category:[a-z][a-z0-9_-]{0,31})|quality:(?:360|480|720|1080|1440|2160|max)|jobs:\d{1,6}|(?:job|cancel|retry):[a-f0-9-]{36})$/.test(v.data||''))return null;
  if(!['menu','callback'].includes(v.kind))return null;
  // event_id/token identifies one click, not a button: later refresh clicks remain usable.
  const identity=data.event_id||data.token;

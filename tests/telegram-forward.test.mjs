@@ -51,3 +51,11 @@ test('automatic albums separate attachment types, survive retries and deduplicat
  await h.flow.receive(album,{...source,kind:'document'},2);await h.flow.receive(album,source,3);
  assert.deepEqual(h.jobs.map(j=>j.category),['pictures','docs']);assert.equal(Object.keys(h.state().forwardRequests).length,3);
 });
+test('completed and cancelled selections do not exhaust the 50 pending-request slots',async()=>{
+ const h=harness();
+ for(let i=1;i<=55;i++){await h.flow.receive(msg,source,i);const id=Object.keys(h.state().forwardRequests).at(-1);await h.flow.callback(h.q(id,i%2?'movies':'_cancel'));}
+ assert.equal(Object.keys(h.state().forwardRequests).length,55);
+ await h.flow.receiveLinks(msg,['https://example.com/video'],56);assert.equal(Object.keys(h.state().forwardRequests).length,56);
+ const busy=harness();for(let i=1;i<=51;i++)await busy.flow.receive(msg,source,i);
+ assert.equal(Object.keys(busy.state().forwardRequests).length,50);assert.match(busy.messages.at(-1).text,/过多/);
+});

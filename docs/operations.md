@@ -1,5 +1,7 @@
 # 部署、升级与迁移
 
+1.6.2 的审查范围、修复与验证记录见 [项目审查](review-1.6.2.md)。升级应统一重建 manager、queue、telegram、feishu、web、proxy，避免应用服务混用旧镜像；Cobalt 和 Telegram Bot API 保留各自版本号。
+
 ## 首次部署
 
 克隆仓库，在工程目录复制 `.env.example` 为 `.env`，设置已存在的 `MEDIA_ROOT` 与 `STATE_ROOT` 以及监听地址。再执行：

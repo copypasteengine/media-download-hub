@@ -19,15 +19,15 @@ export function jobKeyboard(j){
  if(['failed','cancelled'].includes(j.state))buttons.push({text:'重新下载',callback_data:'retry:'+j.id});
  return {inline_keyboard:[buttons]};
 }
-export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,help=helpText,now=()=>Date.now()}){
- const mainKeyboard=collapsedKeyboard;
+export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,help=helpText,allowDefaultCategory=false,compactMenu=true,now=()=>Date.now()}){
+ const mainKeyboard=compactMenu?collapsedKeyboard:{inline_keyboard:makeKeyboard(categories).inline_keyboard.slice(0,-1)};
  const findCategory=id=>activeCategories(categories).find(c=>c.id===id);
  async function home(text='点击「菜单」选择操作；也可以直接转发视频，再选择保存位置。'){
   state.awaitingLink=null;save();return send(text,{reply_markup:mainKeyboard});
  }
  async function menu(){
   state.awaitingLink=null;save();
-  return send('请选择操作，选择后菜单会收起。',{reply_markup:makeKeyboard(categories)});
+  return send('请选择操作。',{reply_markup:compactMenu?makeKeyboard(categories):mainKeyboard});
  }
  async function resetMenu(){
   // Remove the old persistent reply keyboard without interrupting pending input.
@@ -74,6 +74,7 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
    return state.awaitingLink.category;
   }
   // No explicit selection: caller must show a per-message destination picker.
+  if(allowDefaultCategory){if(findCategory(defaultCategory))return defaultCategory;await home('默认分类不可用，请重新选择。');return null;}
   return undefined;
  }
  async function callback(q){
@@ -83,8 +84,8 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
   if(data.startsWith('menu:')){
    const action=data.slice(5);
    if(!['open','close','jobs','quality','login','help'].includes(action)&&!action.startsWith('category:'))return;
-   await telegram('editMessageReplyMarkup',{chat_id:q.message.chat.id,message_id:q.message.message_id,reply_markup:action==='open'?makeKeyboard(categories):collapsedKeyboard});
-   if(action==='open'||action==='close')return;
+   if(compactMenu)await telegram('editMessageReplyMarkup',{chat_id:q.message.chat.id,message_id:q.message.message_id,reply_markup:action==='open'?makeKeyboard(categories):collapsedKeyboard});
+   if(action==='open'||action==='close'){if(!compactMenu)await menu();return;}
    if(action.startsWith('category:')){await prompt(action.slice(9));return;}
    if(action==='jobs'){await jobs();return;}
    if(action==='quality'){await quality();return;}

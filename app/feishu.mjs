@@ -3,7 +3,7 @@ import {deliverLoginAlerts} from './login-health-core.mjs';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createUI,jobKeyboard,makeKeyboard} from './telegram-ui.mjs';
-import {parseMessage,jobText,helpText} from './telegram-core.mjs';
+import {parseMessage,jobText,helpText,shouldNotifyJob} from './telegram-core.mjs';
 import {createQueueClient} from './queue-client.mjs';
 import {normalizedMessage,normalizedAction,isOwner,acceptIncoming,messageCard,feishuHelp,digest,menuLabels} from './feishu-core.mjs';
 const require=createRequire('/feishu-runtime/package.json'),lark=require('@larksuiteoapi/node-sdk');
@@ -30,7 +30,7 @@ async function send(text,extra={},uniqueKey){
  if(!res.data?.message_id)throw Error('Feishu response missing message ID');
  return {message_id:res.data.message_id};
 }
-const ui=createUI({state,save,send,queue,categories,defaultCategory:cfg.defaultCategory,telegram:async()=>{}});
+const ui=createUI({state,save,send,queue,categories,defaultCategory:cfg.defaultCategory,allowDefaultCategory:true,compactMenu:false,telegram:async()=>{}});
 function fakeMessage(item,text=item.text){return {text,from:{id:item.userId,is_bot:false},chat:{id:item.chatId,type:'private'},...(item.replyId?{reply_to_message:{message_id:item.replyId}}:{})};}
 async function handle(item){
  if(!state.owner){state.owner={userId:item.userId,chatId:item.chatId};save();}
@@ -80,9 +80,9 @@ async function notify(){
   try{const health=await queue('platform-status');await deliverLoginAlerts({snapshot:health,state,save,send});}
   catch{console.log('Platform login notice temporarily unavailable');}
   const d=await queue('jobs');
-  for(const j of d.jobs){const w=state.watches[j.id];if(!w||w.notified||!['completed','failed','cancelled'].includes(j.state))continue;
+  for(const j of d.jobs){const w=state.watches[j.id];if(!w)continue;if(w.notified&&w.notifiedAttempt===undefined){w.notifiedAttempt=j.attempts;save();}if(!shouldNotifyJob(w,j))continue;
    await send(jobText(j)+(j.state==='completed'?'\n已保存到「'+j.categoryName+'」分类。':''),{reply_markup:jobKeyboard(j)},'notice:'+j.id+':'+j.state+':'+j.attempts);
-   w.notified=true;w.lastState=j.state;save();
+   w.notified=true;w.lastState=j.state;w.notifiedAttempt=j.attempts;save();
   }
  }catch(e){console.log('Feishu notification retry '+JSON.stringify(safeError(e)));}finally{notifying=false;}
 }

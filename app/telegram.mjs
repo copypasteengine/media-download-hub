@@ -5,6 +5,7 @@ import {read,atomic} from '../manager/core.mjs';
 import {handleVideoLinks} from './telegram-links.mjs';
 import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
+import {createQueueClient} from './queue-client.mjs';
 import {createRequire} from 'node:module';
 import {helpText,parseMessage,ownerAllowed,canPair,jobText,findJob,shouldNotifyJob} from './telegram-core.mjs';
 import {createUI,collapsedKeyboard,jobKeyboard,MENU_VERSION} from './telegram-ui.mjs';
@@ -15,19 +16,14 @@ const require=createRequire('/runtime/package.json');
 const {ProxyAgent}=require('undici');
 const statePath=cfg.statePath||'/state/telegram.json';
 let state=fs.existsSync(statePath)?JSON.parse(fs.readFileSync(statePath,'utf8')):{offset:0,owner:null,quality:'1080',watches:{}};
-let session=null,stopping=false,notifying=false;
+let stopping=false,notifying=false;
 const shutdown=new AbortController();
 const sleep=ms=>new Promise(r=>{const done=()=>{clearTimeout(t);shutdown.signal.removeEventListener('abort',done);r();};const t=setTimeout(done,ms);shutdown.signal.addEventListener('abort',done,{once:true});});
 function save(){const tmp=statePath+'.new';fs.writeFileSync(tmp,JSON.stringify(state),{mode:0o600});const fd=fs.openSync(tmp,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,statePath);}
 const transport=createTelegramTransport({token:cfg.token,local:!!cfg.local,makeProxy:()=>new ProxyAgent(cfg.proxy||'http://proxy:1080'),signal:shutdown.signal,onFailure:detail=>console.log('Telegram transport failure '+JSON.stringify(detail))});
 const telegram=transport.request;
 const currentHelp=cfg.local?helpText.replace('当前官方 Bot 接口限单个文件 20 MB。较大文件需要自建 Bot API。','已启用大文件服务，单文件大小及磁盘保留空间按后台设置执行。'):helpText;
-async function queue(route,method='GET',data,retried=false){
- if(!session){const r=await fetch(cfg.queueUrl+'/nas/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:cfg.queueUsername,password:cfg.queuePassword}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('下载队列登录失败');const cookie=r.headers.get('set-cookie')?.split(';')[0];const me=await fetch(cfg.queueUrl+'/nas/api/me',{headers:{Cookie:cookie},signal:AbortSignal.timeout(10000)}).then(r=>r.json());session={cookie,csrf:me.csrf};}
- const r=await fetch(cfg.queueUrl+'/nas/api/'+route,{method,headers:{Cookie:session.cookie,'X-CSRF-Token':session.csrf,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(15000)});
- if(r.status===401&&!retried){session=null;return queue(route,method,data,true);}
- const d=await r.json();if(!r.ok)throw Object.assign(new Error(d.error||'队列请求失败'),{permanent:r.status>=400&&r.status<500});return d;
-}
+const queue=createQueueClient(cfg);
 async function send(text,extra={}){if(!state.owner)return;return telegram('sendMessage',{chat_id:state.owner.chatId,text:text.slice(0,3900),link_preview_options:{is_disabled:true},...extra});}
 const ui=createUI({state,save,send,telegram,queue,categories,defaultCategory:cfg.defaultCategory,help:currentHelp});
 const forwards=createForwardFlow({state,save,send,telegram,queue,categories,showJob:ui.showJob});

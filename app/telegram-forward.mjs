@@ -8,6 +8,7 @@ import {activeCategories} from './categories.mjs';
 export function createForwardFlow({state,save,send,telegram,queue,categories,showJob,now=()=>Date.now()}){
  const choices=()=>activeCategories(categories);
  const requests=()=>state.forwardRequests||(state.forwardRequests={});
+ const pendingCount=all=>Object.values(all).filter(p=>!p.cancelled&&!p.items.every(item=>item.jobId)).length;
  const buttons=p=>{const recommended=choices().find(c=>c.id===p.preferredCategory)||recommendedCategory(choices(),p.kind);const list=choices().sort((a,b)=>Number(b.id===recommended?.id)-Number(a.id===recommended?.id)).map(c=>({text:(c.id===recommended?.id?'推荐 · ':'')+c.name,callback_data:`forward:${p.id}:${c.id}`})),rows=[];for(let i=0;i<list.length;i+=2)rows.push(list.slice(i,i+2));rows.push([{text:'不保存',callback_data:`forward:${p.id}:_cancel`}]);return {inline_keyboard:rows};};
  async function submit(p){
   const category=choices().find(c=>c.id===p.category);
@@ -27,7 +28,7 @@ export function createForwardFlow({state,save,send,telegram,queue,categories,sho
   const id=crypto.createHash('sha256').update('links:'+updateId).digest('hex').slice(0,12);
   let p=all[id];
   if(!p){
-   if(Object.keys(all).length>=50){await send('待选择位置的请求过多，请先处理已有保存提示。');return;}
+   if(pendingCount(all)>=50){await send('待选择位置的请求过多，请先处理已有保存提示。');return;}
    p=all[id]={id,kind:'link',items:urls.map((url,i)=>({url,quality:state.quality,requestId:`tg:${updateId}:${i}`})),expires:now()+24*3600000,category:null,promptSent:false};
   }
   state.awaitingLink=null;save();
@@ -43,7 +44,7 @@ export function createForwardFlow({state,save,send,telegram,queue,categories,sho
   const kind=source.kind||'video';
   const intent=state.awaitingLink;
   const id=crypto.createHash('sha256').update(msg.media_group_id?'album:'+msg.media_group_id+(kind==='video'?'':':'+kind):'update:'+updateId).digest('hex').slice(0,12);
-  let p=all[id];if(!p){if(Object.keys(all).length>=50){await send('待选择位置的附件过多，请先处理已有保存提示。');return;}p=all[id]={id,kind,items:[],expires:now()+24*3600000,category:null,promptSent:false};}
+  let p=all[id];if(!p){if(pendingCount(all)>=50){await send('待选择位置的附件过多，请先处理已有保存提示。');return;}p=all[id]={id,kind,items:[],expires:now()+24*3600000,category:null,promptSent:false};}
   if(p.cancelled)return;
   const requestId=`tg:${updateId}:attachment`;
   if(!p.items.some(x=>x.requestId===requestId)){if(p.items.length>=100){await send('这一组附件过多，请分批转发。');return;}p.items.push({source,requestId});}
