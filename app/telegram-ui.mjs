@@ -1,9 +1,17 @@
 import {DEFAULT_CATEGORIES,activeCategories,categoryLabel} from './categories.mjs';
 import {statusText} from './login-health-core.mjs';
 import {helpText,ownerAllowed,jobText} from './telegram-core.mjs';
-export const MENU_VERSION=6;
+export const MENU_VERSION=7;
 export const menuLabels={jobs:'📋 我的下载',login:'🔑 登录状态',quality:'⚙️ 清晰度',help:'❓ 使用帮助',home:'↩️ 返回主菜单'};
-export function makeKeyboard(categories=DEFAULT_CATEGORIES){const buttons=activeCategories(categories).map(categoryLabel),rows=[];for(let i=0;i<buttons.length;i+=2)rows.push(buttons.slice(i,i+2));return {keyboard:[...rows,[menuLabels.jobs,menuLabels.quality],[menuLabels.login,menuLabels.help],[menuLabels.home]],resize_keyboard:true,is_persistent:true,input_field_placeholder:'发送视频后选位置；链接可先选分类'};}
+export const collapsedKeyboard={inline_keyboard:[[{text:'☰ 菜单',callback_data:'menu:open'}]]};
+export function makeKeyboard(categories=DEFAULT_CATEGORIES){
+ const buttons=activeCategories(categories).map(c=>({text:categoryLabel(c),callback_data:'menu:category:'+c.id})),rows=[];
+ for(let i=0;i<buttons.length;i+=2)rows.push(buttons.slice(i,i+2));
+ return {inline_keyboard:[...rows,
+  [{text:menuLabels.jobs,callback_data:'menu:jobs'},{text:menuLabels.quality,callback_data:'menu:quality'}],
+  [{text:menuLabels.login,callback_data:'menu:login'},{text:menuLabels.help,callback_data:'menu:help'}],
+  [{text:'收起菜单',callback_data:'menu:close'}]]};
+}
 export const mainKeyboard=makeKeyboard();
 export function jobKeyboard(j){
  const buttons=[{text:'刷新进度',callback_data:'job:'+j.id}];
@@ -12,10 +20,19 @@ export function jobKeyboard(j){
  return {inline_keyboard:[buttons]};
 }
 export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATEGORIES,defaultCategory=categories[0]?.id,help=helpText,now=()=>Date.now()}){
- const mainKeyboard=makeKeyboard(categories);
+ const mainKeyboard=collapsedKeyboard;
  const findCategory=id=>activeCategories(categories).find(c=>c.id===id);
- async function home(text='请选择下面的操作。链接可先选择分类；视频直接转发，随后选择保存位置。'){
+ async function home(text='点击「菜单」选择操作；也可以直接转发视频，再选择保存位置。'){
   state.awaitingLink=null;save();return send(text,{reply_markup:mainKeyboard});
+ }
+ async function menu(){
+  state.awaitingLink=null;save();
+  return send('请选择操作，选择后菜单会收起。',{reply_markup:makeKeyboard(categories)});
+ }
+ async function resetMenu(){
+  // Remove the old persistent reply keyboard without interrupting pending input.
+  await send('菜单已改为点击展开，不再常驻输入区。',{reply_markup:{remove_keyboard:true}});
+  return send('需要操作时点击「菜单」。转发视频后仍会单独询问保存位置。',{reply_markup:collapsedKeyboard});
  }
  async function prompt(category){
   const selected=findCategory(category);if(!selected)return home('该分类已停用或删除，请重新选择。');
@@ -62,6 +79,17 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
   if(!ownerAllowed(state.owner,{...q.message,from:q.from}))return;
   await telegram('answerCallbackQuery',{callback_query_id:q.id}).catch(()=>{});
   const data=String(q.data||'');
+  if(data.startsWith('menu:')){
+   const action=data.slice(5);
+   if(!['open','close','jobs','quality','login','help'].includes(action)&&!action.startsWith('category:'))return;
+   await telegram('editMessageReplyMarkup',{chat_id:q.message.chat.id,message_id:q.message.message_id,reply_markup:action==='open'?makeKeyboard(categories):collapsedKeyboard});
+   if(action==='open'||action==='close')return;
+   if(action.startsWith('category:')){await prompt(action.slice(9));return;}
+   if(action==='jobs'){await jobs();return;}
+   if(action==='quality'){await quality();return;}
+   if(action==='login'){await send(statusText(await queue('platform-status')),{reply_markup:collapsedKeyboard});return;}
+   if(action==='help'){await send(help,{reply_markup:collapsedKeyboard});return;}
+  }
   if(/^quality:(360|480|720|1080|1440|2160|max)$/.test(data)){
    state.quality=data.split(':')[1];save();await send('后续下载优先使用 '+(state.quality==='max'?'最高可用画质':state.quality+'p')+'，实际以平台允许的画质为准。',{reply_markup:mainKeyboard});return;
   }
@@ -75,5 +103,5 @@ export function createUI({state,save,send,telegram,queue,categories=DEFAULT_CATE
   if(m[1]==='retry'){state.watches[j.id]={lastState:'queued'};save();}
   await showJob(r.job,m[1]==='cancel'?'已提交取消请求。\n':'已重新加入下载队列。\n');
  }
- return {home,prompt,quality,jobs,showJob,menuMessage,resolveCategory,callback};
+ return {home,menu,resetMenu,prompt,quality,jobs,showJob,menuMessage,resolveCategory,callback};
 }

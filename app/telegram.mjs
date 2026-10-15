@@ -7,9 +7,9 @@ import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
 import {createRequire} from 'node:module';
 import {helpText,parseMessage,ownerAllowed,canPair,jobText,findJob,shouldNotifyJob} from './telegram-core.mjs';
-import {createUI,makeKeyboard,jobKeyboard,MENU_VERSION} from './telegram-ui.mjs';
+import {createUI,collapsedKeyboard,jobKeyboard,MENU_VERSION} from './telegram-ui.mjs';
 const cfg=JSON.parse(fs.readFileSync(process.env.BOT_CONFIG||'/run/bot/config.json','utf8'));
-const categories=cfg.categories,mainKeyboard=makeKeyboard(categories),menuVersion=MENU_VERSION+':'+cfg.menuVersion;
+const categories=cfg.categories,mainKeyboard=collapsedKeyboard,menuVersion=MENU_VERSION+':'+cfg.menuVersion;
 if(!/^\d{5,15}:[A-Za-z0-9_-]{20,}$/.test(cfg.token||''))throw Error('Telegram Token 尚未配置');
 const require=createRequire('/runtime/package.json');
 const {ProxyAgent}=require('undici');
@@ -42,7 +42,8 @@ async function handle(update){
  if(await ui.menuMessage(msg))return;
  let parsed;try{parsed=parseMessage(msg,cfg);}catch(e){if(!e.permanent)throw e;await send(e.message);return;}
  switch(parsed.command){
-  case 'start':case 'menu':await ui.home();return;
+  case 'start':await ui.home();return;
+  case 'menu':await ui.menu();return;
   case 'help':await send(currentHelp,{reply_markup:mainKeyboard});return;
   case 'settings':await ui.quality();return;
   case 'quality':if(!parsed.argument){await ui.quality();return;}if(!['360','480','720','1080','1440','2160','max'].includes(parsed.argument)){await send('支持：360、480、720、1080、1440、2160、max。例如 /quality 720');return;}state.quality=parsed.argument;save();await send('后续任务优先清晰度已设为 '+state.quality+'，实际以平台可提供的画质为准。');return;
@@ -83,7 +84,7 @@ async function main(){
  fs.writeFileSync((process.env.SERVICE_STATE_DIR||'/state/queue')+'/bot-info.json',JSON.stringify({username:me.username,id:me.id}),{mode:0o600});
  const webhook=await telegram('getWebhookInfo');if(webhook.url)throw Error('该 Bot 已设置 webhook，请使用专用新 Bot，避免干扰现有应用');
  await telegram('setMyCommands',{commands:[{command:'menu',description:'显示操作按钮'},{command:'download',description:'下载到默认分类'},{command:'help',description:'使用说明'},{command:'status',description:'查看下载任务'},{command:'quality',description:'设置后续任务清晰度'},{command:'cancel',description:'取消任务'},{command:'retry',description:'重试失败任务'}]});
- if(state.owner&&state.menuVersion!==menuVersion){await ui.home('下载分类菜单已更新，请选择新的分类按钮后发送链接。');state.menuVersion=menuVersion;save();}
+ if(state.owner&&state.menuVersion!==menuVersion){await ui.resetMenu();state.menuVersion=menuVersion;save();}
  console.log('Telegram bot ready; owner '+(state.owner?'bound':'awaiting pairing'));
  const timer=setInterval(notify,8000);timer.unref();
  while(!stopping){
