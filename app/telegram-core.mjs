@@ -25,6 +25,9 @@ export function parseMessage(msg,{categories=DEFAULT_CATEGORIES,defaultCategory=
 export function ownerAllowed(owner,msg){return !!owner&&msg?.chat?.type==='private'&&String(msg.from?.id)===String(owner.userId)&&String(msg.chat.id)===String(owner.chatId)&&!msg.from?.is_bot;}
 export function canPair(code,msg){return !msg?.from?.is_bot&&msg?.chat?.type==='private'&&msg.from?.id===msg.chat.id&&parseMessage(msg).command==='start'&&parseMessage(msg).argument===code;}
 export const labels={queued:'排队中',resolving:'解析中',downloading:'下载中',checking:'文件检查中',completed:'已保存',failed:'失败',cancelled:'已取消'};
+export function shouldNotifyJob(watch,job){
+ return !!watch&&['completed','failed','cancelled'].includes(job.state)&&(!watch.notified||watch.lastState!==job.state||(Number.isInteger(watch.notifiedAttempt)&&watch.notifiedAttempt!==job.attempts));
+}
 export const bytesText=n=>n>1024**3?(n/1024**3).toFixed(2)+' GiB':(n/1024**2).toFixed(1)+' MiB';
 export function jobText(j){const quality=j.mediaInfo?.resolution?`实际画面：${j.mediaInfo.resolution}${j.mediaInfo.qualityLabel?'（'+j.mediaInfo.qualityLabel+'）':''}`:'实际画质：待解析';const name=j.private===true?'私密视频':(j.filename||j.metadata?.title||(j.sourceType==='telegram'?'Telegram 视频':new URL(j.url).hostname));return `#${j.id.slice(0,8)} ${labels[j.state]||j.state}\n${name}\n${j.sourceType==='telegram'?'保存 Telegram 提供的文件，不转码':`选择：${j.quality==='max'?'最高可用':j.quality+'p'}`} · ${quality}\n${bytesText(j.bytes||0)}${j.total?' / '+bytesText(j.total):''}${j.stage&&j.state==='resolving'?'\n'+j.stage:''}${j.error?'\n'+(j.private===true?'下载未完成，可重试或检查媒体盘。':j.error):''}`;}
 export function findJob(jobs,prefix){if(!/^[a-f0-9-]{8,36}$/.test(prefix))return null;const matched=jobs.filter(j=>j.id.startsWith(prefix));return matched.length===1?matched[0]:null;}

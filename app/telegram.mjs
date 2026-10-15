@@ -6,7 +6,7 @@ import {telegramPostLink} from './telegram-files.mjs';
 import {deliverLoginAlerts} from './login-health-core.mjs';
 import {createTelegramTransport} from './telegram-transport.mjs';
 import {createRequire} from 'node:module';
-import {helpText,parseMessage,ownerAllowed,canPair,jobText,findJob} from './telegram-core.mjs';
+import {helpText,parseMessage,ownerAllowed,canPair,jobText,findJob,shouldNotifyJob} from './telegram-core.mjs';
 import {createUI,makeKeyboard,jobKeyboard,MENU_VERSION} from './telegram-ui.mjs';
 const cfg=JSON.parse(fs.readFileSync(process.env.BOT_CONFIG||'/run/bot/config.json','utf8'));
 const categories=cfg.categories,mainKeyboard=makeKeyboard(categories),menuVersion=MENU_VERSION+':'+cfg.menuVersion;
@@ -71,8 +71,8 @@ async function notify(){
   try{const health=await queue('platform-status');await deliverLoginAlerts({snapshot:health,state,save,send});}
   catch{console.log('Platform login notice temporarily unavailable');}
   const d=await queue('jobs');
-  for(const j of d.jobs){const w=state.watches[j.id];if(!w||w.notified)continue;if(['completed','failed','cancelled'].includes(j.state)){
-   await send(jobText(j)+(j.state==='completed'?'\n已保存到「'+j.categoryName+'」分类。':j.state==='failed'?'\n点击下方按钮可重新下载。':''),{reply_markup:jobKeyboard(j)});w.lastState=j.state;w.notified=true;save();
+  for(const j of d.jobs){const w=state.watches[j.id];if(!w)continue;if(w.notified&&w.notifiedAttempt===undefined){w.notifiedAttempt=j.attempts;save();}if(shouldNotifyJob(w,j)){
+   await send(jobText(j)+(j.state==='completed'?'\n已保存到「'+j.categoryName+'」分类。':j.state==='failed'?'\n点击下方按钮可重新下载。':''),{reply_markup:jobKeyboard(j)});w.lastState=j.state;w.notified=true;w.notifiedAttempt=j.attempts;save();
   }}
  }catch{console.log('Notification temporarily unavailable; retrying later');}finally{notifying=false;}
 }

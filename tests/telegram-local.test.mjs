@@ -8,7 +8,18 @@ import {openCachedTelegramFile} from '../app/telegram-cache.mjs';
 import {migrateTelegramMode} from '../app/telegram-mode.mjs';
 import {createTelegramTransport} from '../app/telegram-transport.mjs';
 import {defaults,updateSettings,publicSettings} from '../manager/core.mjs';
+import {shouldNotifyJob} from '../app/telegram-core.mjs';
 const token='123456789:abcdefghijklmnopqrstuvwxyz';
+test('retry from the admin console gets a fresh completion or failure notification',()=>{
+ const watch={lastState:'failed',notified:true,notifiedAttempt:1};
+ assert(!shouldNotifyJob(watch,{state:'failed',attempts:1}));
+ assert(!shouldNotifyJob(watch,{state:'resolving',attempts:2}));
+ assert(shouldNotifyJob(watch,{state:'completed',attempts:2}));
+ assert(shouldNotifyJob(watch,{state:'failed',attempts:2}));
+ assert(shouldNotifyJob({lastState:'failed',notified:true},{state:'completed',attempts:2}));
+ assert(!shouldNotifyJob(null,{state:'completed',attempts:2}));
+ assert(!shouldNotifyJob({lastState:'completed',notified:true,notifiedAttempt:2},{state:'completed',attempts:2}));
+});
 test('local getFile recovers transient failures without replaying permanent errors or cancellation',async()=>{
  let calls=0,waits=0;const signal=new AbortController().signal;
  const result=await requestTelegramFile('http://local/getFile',{signal},{local:true,wait:async()=>waits++,fetchImpl:async()=>{calls++;if(calls===1)throw Object.assign(Error('secret token'),{cause:{code:'ECONNRESET'}});if(calls===2)return Response.json({ok:false,error_code:503},{status:503});return Response.json({ok:true,result:{file_size:123}});}});
