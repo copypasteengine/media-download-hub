@@ -37,7 +37,7 @@ test('file transfer requests fresh Telegram file path through dedicated proxy wi
 test('download failures are actionable and cannot expose token or unsafe paths',async()=>{
  const source=telegramAttachment({video:media});
  await assert.rejects(()=>openTelegramFile({...source,botId:'999999'},{token,signal:signal()}),/之前的 Telegram Bot/);
- await assert.rejects(()=>openTelegramFile(source,{token,signal:signal(),fetchImpl:async()=>{throw Error('URL contains '+token);}}),e=>!e.message.includes(token)&&e.message.includes('获取失败'));
+ await assert.rejects(()=>openTelegramFile(source,{token,signal:signal(),fetchImpl:async()=>{throw Error('URL contains '+token);}}),e=>!e.message.includes(token)&&e.message.includes('连接中断'));
  await assert.rejects(()=>openTelegramFile(source,{token,signal:signal(),fetchImpl:async()=>Response.json({ok:false,description:'Bad Request: file is too big'},{status:400})}),/20 MB/);
  await assert.rejects(()=>openTelegramFile(source,{token,signal:signal(),fetchImpl:async()=>Response.json({ok:true,result:{file_path:'../secret'}})}),/无效文件路径/);
  assert(telegramPostLink('https://t.me/example/123'));assert(!telegramPostLink('https://t.me.evil.example/123'));

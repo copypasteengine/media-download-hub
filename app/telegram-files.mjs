@@ -1,12 +1,32 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import {Readable} from 'node:stream';
+import {setTimeout as delay} from 'node:timers/promises';
 import {openCachedTelegramFile} from './telegram-cache.mjs';
 import {telegramApiBase} from './telegram-mode.mjs';
 import {runtimeRequire} from '../manager/dependencies.mjs';
 export const TELEGRAM_CLOUD_LIMIT=20*1024**2;
 const extensions=new Set(['.mp4','.mkv','.webm','.mov','.m4v','.avi','.ts']);
-const bad=message=>Object.assign(new Error(message),{status:400,permanent:true});
+const bad=message=>Object.assign(new Error(message),{status:400,permanent:true,safeForUser:true});
+// getFile is idempotent. A local server reconnect or a busy cancellation must
+// not immediately fail a queued video; never retry a user cancellation.
+export async function requestTelegramFile(url,options,{fetchImpl=fetch,local=false,wait=delay}={}){
+ const attempts=local?3:1;
+ for(let i=0;i<attempts;i++){
+  options.signal?.throwIfAborted();
+  let r,d,networkCode;
+  try{r=await fetchImpl(url,options);d=await r.json();}
+  catch(e){options.signal?.throwIfAborted();networkCode=e.cause?.code||e.code||'NETWORK_ERROR';}
+  if(r?.ok&&d?.ok)return d.result;
+  const code=d?.error_code||r?.status;
+  const retry=networkCode||[409,429,500,502,503,504].includes(code);
+  if(retry&&i+1<attempts){await wait(Math.min(30000,Math.max(3000*(i+1),(d?.parameters?.retry_after||0)*1000)),undefined,{signal:options.signal});continue;}
+  if(networkCode)throw bad('Telegram 文件连接中断，请重试；接口错误：'+(/^[A-Z_0-9]{1,50}$/.test(networkCode)?networkCode:'NETWORK_ERROR'));
+  if(/too big/i.test(d?.description||''))throw bad('该视频超过 Telegram 官方 Bot 的 20 MB 下载限制，需要自建 Bot API 大文件服务。');
+  if(code===413)throw bad('Telegram 缓存盘可用空间不足或文件超过后台大小限制。');
+  throw bad('Telegram 暂时无法提供这个文件（接口状态 '+(Number(code)||'未知')+'），请重试或重新转发原视频。');
+ }
+}
 export function telegramAttachment(msg,options){
  const media=msg.video||msg.video_note||msg.animation||msg.document;
  if(!media)return null;
@@ -41,10 +61,8 @@ export async function openTelegramFile(raw,{token,proxy,local=false,cacheRoot='/
  const dispatcher=local?new (runtimeRequire('undici').Agent)({headersTimeout:6*3600000,bodyTimeout:0}):proxy?(makeDispatcher?makeDispatcher(proxy):new (runtimeRequire('undici').ProxyAgent)(proxy)):undefined;
  let cached;const close=async()=>{cached?.close();await dispatcher?.destroy();};
  try{
-  let r,d;
-  try{r=await fetchImpl(`${telegramApiBase(local)}/bot${token}/getFile`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_id:source.fileId,...(local?{_expected_size:source.size}:{})}),dispatcher,redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(local?6*3600000:30000)])});d=await r.json();}
-  catch{throw bad('Telegram 文件信息获取失败，请检查下载服务代理后重试。');}
-  if(!r.ok||!d.ok){if(/too big/i.test(d.description||''))throw bad('该视频超过 Telegram 官方 Bot 的 20 MB 下载限制，需要自建 Bot API 大文件服务。');throw bad('Telegram 暂时无法提供这个文件，请重试或重新转发原视频。');}
+  const result=await requestTelegramFile(`${telegramApiBase(local)}/bot${token}/getFile`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_id:source.fileId,...(local?{_expected_size:source.size}:{})}),dispatcher,redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(local?6*3600000:30000)])},{fetchImpl,local});
+  const d={result};
   if(!local&&d.result?.file_size>TELEGRAM_CLOUD_LIMIT)throw bad('该视频超过 Telegram 官方 Bot 的 20 MB 下载限制，需要自建 Bot API 大文件服务。');
   if(local){
    try{cached=openCachedTelegramFile(d.result?.file_path,cacheRoot,token);}catch{throw bad('Telegram 本地缓存不可用或路径无效，请重试。');}

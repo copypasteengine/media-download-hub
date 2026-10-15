@@ -3,12 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {telegramAttachment,openTelegramFile,TELEGRAM_CLOUD_LIMIT} from '../app/telegram-files.mjs';
+import {telegramAttachment,openTelegramFile,requestTelegramFile,TELEGRAM_CLOUD_LIMIT} from '../app/telegram-files.mjs';
 import {openCachedTelegramFile} from '../app/telegram-cache.mjs';
 import {migrateTelegramMode} from '../app/telegram-mode.mjs';
 import {createTelegramTransport} from '../app/telegram-transport.mjs';
 import {defaults,updateSettings,publicSettings} from '../manager/core.mjs';
 const token='123456789:abcdefghijklmnopqrstuvwxyz';
+test('local getFile recovers transient failures without replaying permanent errors or cancellation',async()=>{
+ let calls=0,waits=0;const signal=new AbortController().signal;
+ const result=await requestTelegramFile('http://local/getFile',{signal},{local:true,wait:async()=>waits++,fetchImpl:async()=>{calls++;if(calls===1)throw Object.assign(Error('secret token'),{cause:{code:'ECONNRESET'}});if(calls===2)return Response.json({ok:false,error_code:503},{status:503});return Response.json({ok:true,result:{file_size:123}});}});
+ assert.equal(result.file_size,123);assert.equal(calls,3);assert.equal(waits,2);
+ calls=0;await assert.rejects(requestTelegramFile('http://local/getFile',{signal},{local:true,fetchImpl:async()=>{calls++;return Response.json({ok:false,error_code:400,description:token},{status:400});}}),e=>e.safeForUser&&!e.message.includes(token)&&e.message.includes('400'));assert.equal(calls,1);
+ const controller=new AbortController();calls=0;
+ await assert.rejects(requestTelegramFile('http://local/getFile',{signal:controller.signal},{local:true,fetchImpl:async()=>{calls++;controller.abort();throw Error('network');}}),e=>e.name==='AbortError');assert.equal(calls,1);
+});
 test('local mode downloads >20MB through the private API and removes only its completed cache',async t=>{
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'mdh-local-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const dir=path.join(root,'files',token,'videos');fs.mkdirSync(dir,{recursive:true});

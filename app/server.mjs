@@ -138,7 +138,7 @@ async function kick(){
  try{await download(j,controller);}
  catch(e){
   try{removePartial(j);}catch{}
-  const safeError=j.sourceType==='telegram'&&!/^[\u3400-\u9fff]/.test(e.message||'')?'Telegram 文件下载失败，请检查代理后重试。':e.message;
+  const safeError=j.sourceType==='telegram'&&!e.safeForUser&&!/^[\u3400-\u9fff]/.test(e.message||'')?'Telegram 文件下载失败，请重试或检查服务状态。':e.message;
   update(j,{state:j.cancelRequested?'cancelled':stopping?'queued':'failed',error:j.cancelRequested?null:stopping?'服务重启后重新下载':controller.signal.reason?.message||safeError||'下载失败'});
  }
  finally{worker=null;if(!stopping)setTimeout(kick,100);}

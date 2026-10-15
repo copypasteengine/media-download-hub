@@ -72,7 +72,7 @@ const server=http.createServer(async(req,res)=>{
    });upstream.on('error',reject);upstream.end(JSON.stringify(data));
   });
   done=true;json(res,r.status,r.data);
- }catch{if(download){await reset();}done=true;json(res,502,{ok:false,error_code:502,description:'Local Telegram API unavailable'});}
+ }catch(e){console.log(JSON.stringify({event:'telegram-upstream-error',method,code:/^[A-Z_0-9]{1,50}$/.test(e.code||'')?e.code:e.name==='AbortError'?'ABORTED':'UPSTREAM_ERROR'}));if(download){await reset();}done=true;json(res,502,{ok:false,error_code:502,description:'Local Telegram API unavailable'});}
  finally{if(download&&active===abort)active=null;}
 });
 server.requestTimeout=15000;server.headersTimeout=10000;
