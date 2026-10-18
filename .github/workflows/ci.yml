@@ -26,6 +26,8 @@ jobs:
           cache: npm
           cache-dependency-path: runtime/app/package-lock.json
       - run: npm ci --ignore-scripts --prefix runtime/app
+      - name: Install FFmpeg for media finalization regression tests
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - run: npm run check
       - run: npm test
       - name: Check Python syntax

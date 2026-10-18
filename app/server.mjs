@@ -11,6 +11,7 @@ import {downloadOptions, downloadError, codecFallback,emptyStreamFallback} from 
 import {availableFilename,alreadyPublished,publishFile} from './naming.mjs';
 import {activeStates,ensureQueueCapacity,canAccessJob,completedFileExists} from './queue-policy.mjs';
 import {volumeIdentity,stagingDirectory} from './storage-guard.mjs';
+import {finalizeMedia} from './media-finalize.mjs';
 
 const cfg=JSON.parse(fs.readFileSync(process.env.QUEUE_CONFIG||'/run/queue/config.json','utf8'));
 const stateDir=cfg.stateDir||'/state', dbFile=path.join(stateDir,'jobs.json');
@@ -125,6 +126,12 @@ async function download(j,controller,options=downloadOptions(j),fallbackReason=n
  if(!j.bytes)throw Object.assign(fail('上游返回了空文件，未收到视频数据；请稍后重试'),{code:'EMPTY_MEDIA_STREAM',codec:result.mediaInfo?.codec||options.youtubeVideoCodec});
  if((total&&j.bytes!==total)||(telegramFile?.size&&j.bytes!==telegramFile.size))throw fail('文件未下载完整，请重试');
  update(j,{state:'checking'});
+ if(j.sourceType!=='telegram'&&['.mkv','.webm'].includes(ext)){
+  update(j,{stage:'正在完善视频时长和播放索引'});
+  const sourceBytes=j.bytes;
+  const bytes=await finalizeMedia({file:j.partial,extension:ext,ffmpeg:cfg.ffmpeg,signal:controller.signal,reserveBytes:reserve,maxBytes:maxFile,checkStorage:()=>storage(j.category)});
+  update(j,{sourceBytes,bytes,total:bytes,stage:null});
+ }
  if(j.sourceType!=='telegram'||['video','audio'].includes(validateTelegramAttachment(j.telegramSource,cfg.telegramFiles).kind))await verifyMedia(j.partial,controller.signal);
  if(controller.signal.aborted)throw fail('任务已取消');
  storage(j.category);
