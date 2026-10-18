@@ -4,6 +4,7 @@ import http from 'node:http';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import {runtimeRequire} from './dependencies.mjs';
+import {parsePluginOptions,simpleObfs} from './ss-plugin.mjs';
 const YAML=runtimeRequire('yaml');
 const MAX_BYTES=2*1024*1024;
 const decode=s=>Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');
@@ -30,15 +31,21 @@ function node(p) {
  else if(['http','socks'].includes(p.type))out.settings={servers:[{address:p.host,port,...(p.username?{users:[{user:p.username,pass:p.password||''}]}:{})}]};
  else throw Error('不支持的节点协议 '+p.type);
  out.streamSettings=transport(p.transport||{});
+ if(p.plugin)out._mdhObfs=p.plugin;
  return {name:clean(p.name)||p.type+' · '+p.host,protocol:p.type,server:p.host,port,config:{outbounds:[out]}};
 }
 function uri(line) {
+ const labelled=line.match(/^[^:\r\n]{1,160}:\s+(ss:\/\/\S+)$/);if(labelled)line=labelled[1];
  if(line.startsWith('vmess://')) {const v=JSON.parse(decode(line.slice(8)));if(v.type&&v.type!=='none')throw Error('不支持 VMess header type');return node({type:'vmess',name:v.ps,host:v.add,port:v.port,uuid:v.id,alterId:v.aid,cipher:v.scy,transport:{network:v.net||'tcp',security:v.tls||'none',sni:v.sni||v.host,host:v.host,path:v.path,serviceName:v.path,fp:v.fp,alpn:v.alpn}});}
  if(line.startsWith('ss://')) {
   let raw=line.slice(5),hash=raw.indexOf('#'),name=hash<0?'':decodeURIComponent(raw.slice(hash+1));if(hash>=0)raw=raw.slice(0,hash);
-  if(raw.includes('plugin='))throw Error('暂不支持 Shadowsocks 插件');raw=raw.split('?')[0];if(!raw.includes('@'))raw=decode(raw);
+  const query=raw.indexOf('?'),params=new URLSearchParams(query<0?'':raw.slice(query+1));if(query>=0)raw=raw.slice(0,query);
+  if(params.getAll('plugin').length>1)throw Error('SS 插件参数重复');
+  const pluginSpec=parsePluginOptions(params.get('plugin')||''),plugin=simpleObfs(pluginSpec.name,pluginSpec.options);
+  if(!raw.includes('@'))raw=decode(raw);
   const index=raw.lastIndexOf('@');if(index<0)throw Error('SS 链接无效');let auth=raw.slice(0,index);if(!auth.includes(':'))auth=decode(auth);const colon=auth.indexOf(':');const host=new URL('http://'+raw.slice(index+1));
-  return node({type:'shadowsocks',name,host:host.hostname.replace(/^\[|\]$/g,''),port:host.port,cipher:decodeURIComponent(auth.slice(0,colon)),password:decodeURIComponent(auth.slice(colon+1))});
+  if(colon<1)throw Error('SS 加密方式或密码无效');
+  return node({type:'shadowsocks',name,plugin,host:host.hostname.replace(/^\[|\]$/g,''),port:host.port,cipher:decodeURIComponent(auth.slice(0,colon)),password:decodeURIComponent(auth.slice(colon+1))});
  }
  const u=new URL(line),type=u.protocol.slice(0,-1),p=u.searchParams;
  if(!['vless','trojan','socks','http','https'].includes(type))throw Error('不支持的节点协议 '+type);
@@ -46,8 +53,10 @@ function uri(line) {
  return node({type:type==='https'?'http':type,name:decodeURIComponent(u.hash.slice(1)),host:u.hostname.replace(/^\[|\]$/g,''),port:u.port||(type==='https'?443:type==='http'?80:0),uuid:decodeURIComponent(u.username),password:decodeURIComponent(type==='trojan'?u.username:u.password),username:decodeURIComponent(u.username),flow:p.get('flow'),transport:{network:p.get('type')||'tcp',security:p.get('security')||(type==='trojan'||type==='https'?'tls':'none'),sni:p.get('sni'),fp:p.get('fp'),pbk:p.get('pbk'),sid:p.get('sid'),spx:p.get('spx'),path:p.get('path'),host:p.get('host'),serviceName:p.get('serviceName'),alpn:p.get('alpn'),insecure:['1','true'].includes(p.get('allowInsecure'))}});
 }
 function clash(v) {
- if(v.plugin||v['dialer-proxy'])throw Error('暂不支持插件或链式代理');
- const reality=v['reality-opts'];return node({type:v.type==='ss'?'shadowsocks':v.type==='socks5'?'socks':v.type,name:v.name,host:v.server,port:v.port,uuid:v.uuid,password:v.password,username:v.username,cipher:v.cipher,alterId:v.alterId,flow:v.flow,transport:{network:v.network||'tcp',security:reality?'reality':v.tls||v.type==='trojan'?'tls':'none',sni:v.servername||v.sni,fp:v['client-fingerprint'],pbk:reality?.['public-key'],sid:reality?.['short-id'],path:v['ws-opts']?.path||v['http-upgrade-opts']?.path,host:v['ws-opts']?.headers?.Host||v['http-upgrade-opts']?.host,serviceName:v['grpc-opts']?.['grpc-service-name'],insecure:v['skip-cert-verify'],alpn:v.alpn}});
+ if(v['dialer-proxy'])throw Error('暂不支持链式代理');
+ if(v.plugin&&v.type!=='ss')throw Error('只有 SS 节点支持混淆插件');
+ const plugin=simpleObfs(v.plugin,v['plugin-opts']||{});
+ const reality=v['reality-opts'];return node({plugin,type:v.type==='ss'?'shadowsocks':v.type==='socks5'?'socks':v.type,name:v.name,host:v.server,port:v.port,uuid:v.uuid,password:v.password,username:v.username,cipher:v.cipher,alterId:v.alterId,flow:v.flow,transport:{network:v.network||'tcp',security:reality?'reality':v.tls||v.type==='trojan'?'tls':'none',sni:v.servername||v.sni,fp:v['client-fingerprint'],pbk:reality?.['public-key'],sid:reality?.['short-id'],path:v['ws-opts']?.path||v['http-upgrade-opts']?.path,host:v['ws-opts']?.headers?.Host||v['http-upgrade-opts']?.host,serviceName:v['grpc-opts']?.['grpc-service-name'],insecure:v['skip-cert-verify'],alpn:v.alpn}});
 }
 export function parseSubscription(input) {
  if(typeof input!=='string'||!input.trim()||Buffer.byteLength(input)>MAX_BYTES)throw Error('订阅为空或超过 2 MiB');

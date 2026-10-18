@@ -1,3 +1,4 @@
+import {runtimePath} from './proxy-runtime.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,7 +34,7 @@ async function probe(platform,cookie){if(!cookie)return {status:'unconfigured'};
 async function saveCookie(platform,input){let cookie;try{cookie=cookieInput(platform,input);}catch(e){throw error(e.message);}const result=await probe(platform,cookie);if(result.status!=='valid')throw error(result.status==='invalid'?'登录已失效，原登录态未改动':'平台验证暂时失败，请检查代理或稍后重试；原登录态未改动',422);atomic(`${config}/platform-auth/${platform}.json`,{cookie,capturedAt:new Date().toISOString()});return {ok:true,status:'valid'};}
 function validateCategory(c,confirm=false){const p=categoryPath(c,roots);if(confirm)fs.mkdirSync(p,{recursive:true,mode:0o755});if(!fs.existsSync(p))throw error('分类「'+c.name+'」目录不存在，请确认存储映射');const m=path.join(p,'.cobalt-volume');if(confirm){if(fs.existsSync(m)){const id=volumeIdentity(p);if(!id||id.length>256)throw error('目录标识无效');c.volumeId=id;}else fs.writeFileSync(m,c.volumeId,{mode:0o600,flag:'wx'});c.fsType=Number(fs.statfsSync(p).type);c.ready=true;}if(!c.ready||!fs.existsSync(m)||volumeIdentity(p)!==c.volumeId)throw error('分类「'+c.name+'」尚未确认或存储标识不符');const t=fs.statfsSync(p);if(c.fsType&&Number(t.type)!==c.fsType)throw error('分类「'+c.name+'」文件系统与确认时不符');fs.accessSync(p,fs.constants.W_OK);return {id:c.id,name:c.name,path:c.path,ready:true,free:t.bavail*t.bsize,total:t.blocks*t.bsize};}
 function validateDisk(s,confirm=false){return s.categories.filter(c=>c.enabled).map(c=>validateCategory(c,confirm));}
-function checkProxy(s){atomic('/tmp/check-xray.json',xrayConfig(s));try{const test=spawnSync('/usr/local/bin/xray',['run','-test','-config','/tmp/check-xray.json'],{timeout:10000,stdio:'ignore'});if(test.status!==0)throw error('代理配置未通过 Xray 校验，原配置保持不变');}finally{fs.rmSync('/tmp/check-xray.json',{force:true});}}
+function checkProxy(s){atomic('/tmp/check-xray.json',xrayConfig(s));try{const test=spawnSync(process.execPath,[runtimePath,'/tmp/check-xray.json','--test'],{timeout:10000,stdio:'ignore'});if(test.status!==0)throw error('代理配置未通过 Xray 校验，原配置保持不变');}finally{fs.rmSync('/tmp/check-xray.json',{force:true});}}
 const proxyController=createProxyController({read:readSettings,save:s=>atomic(config+'/settings.json',s),probe:probeNode,validate:p=>checkProxy({proxy:p}),isDownloading:()=>read(state+'/queue/jobs.json',[]).some(j=>['resolving','downloading','checking'].includes(j.state)),isPaused:()=>restoring||fs.existsSync(config+'/maintenance')});
 setInterval(()=>void proxyController.tick(),15000).unref();
 function idleProxy(){if(proxyController.state().running)throw error('正在检测节点，请等待完成或先取消检测',409);}

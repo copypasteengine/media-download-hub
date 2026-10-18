@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+import {setTimeout as delay} from 'node:timers/promises';
+import {parseSubscription} from '../manager/proxy-import.mjs';
+import {proxyPlan,runtimePath} from '../manager/proxy-runtime.mjs';
+const config=()=>parseSubscription('ss://aes-256-gcm:example@edge.example.com:8388?plugin='+encodeURIComponent('obfs-local;obfs=tls;obfs-host=cdn.example.com:95556')).nodes[0].config;
+test('Private runtime redirects only plugin nodes and preserves their original settings',()=>{
+ const c=config(),before=structuredClone(c),{config:runtime,helpers}=proxyPlan(c,[12001]);assert.deepEqual(c,before);
+ assert.equal(runtime.outbounds[0].settings.servers[0].address,'127.0.0.1');assert.equal(runtime.outbounds[0].settings.servers[0].port,12001);assert.equal(runtime.outbounds[0]._mdhObfs,undefined);
+ assert.deepEqual(helpers[0].args,['-s','edge.example.com','-p','8388','-b','127.0.0.1','-l','12001','--obfs','tls','--obfs-host','cdn.example.com:95556']);
+ c.outbounds[0].streamSettings={network:'ws'};assert.throws(()=>proxyPlan(c,[12001]),/叠加/);
+ assert.deepEqual(proxyPlan({outbounds:[{protocol:'freedom'}]},[]).helpers,[]);
+});
+test('Runtime owns helper lifecycle, validates without starting helpers and cleans up on shutdown or failure',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mdh-runtime-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const helper=path.join(dir,'helper'),xray=path.join(dir,'xray'),cfg=path.join(dir,'config.json');
+ fs.writeFileSync(cfg,JSON.stringify(config()));
+ fs.writeFileSync(helper,`#!${process.execPath}\nconst fs=require('fs'),net=require('net');fs.writeFileSync(process.env.TEST_DIR+'/helper.pid',String(process.pid));net.createServer(s=>s.end()).listen(Number(process.argv[process.argv.indexOf('-l')+1]),'127.0.0.1');`,{mode:0o700});
+ fs.writeFileSync(xray,`#!${process.execPath}\nconst fs=require('fs');if(process.argv.includes('-test'))process.exit(0);fs.writeFileSync(process.env.TEST_DIR+'/xray.pid',String(process.pid));if(process.env.CRASH==='1')setTimeout(()=>process.exit(2),150);else setInterval(()=>{},1000);`,{mode:0o700});
+ const launch=(args=[],env={})=>{const p=spawn(process.execPath,[runtimePath,cfg,...args],{stdio:'ignore',env:{...process.env,TEST_DIR:dir,OBFS_BINARY:helper,XRAY_BINARY:xray,...env}});const done=new Promise(r=>p.once('exit',code=>r(code)));t.after(()=>p.kill('SIGKILL'));return {p,done};};
+ const validated=launch(['--test']);assert.equal(await validated.done,0);assert(!fs.existsSync(dir+'/helper.pid'));
+ const running=launch();for(let i=0;i<100&&!fs.existsSync(dir+'/xray.pid');i++)await delay(30);
+ assert(fs.existsSync(dir+'/xray.pid'));const pid=Number(fs.readFileSync(dir+'/helper.pid','utf8'));running.p.kill('SIGTERM');assert.equal(await running.done,0);assert.throws(()=>process.kill(pid,0));
+ const crashed=launch([],{CRASH:'1'});assert.equal(await crashed.done,1);assert.throws(()=>process.kill(Number(fs.readFileSync(dir+'/helper.pid','utf8')),0));
+ const missing=launch([],{OBFS_BINARY:dir+'/missing'});assert.equal(await missing.done,1);
+ const missingXray=launch([],{XRAY_BINARY:dir+'/missing'});assert.equal(await missingXray.done,1);assert.throws(()=>process.kill(Number(fs.readFileSync(dir+'/helper.pid','utf8')),0));
+});
