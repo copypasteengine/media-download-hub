@@ -5,6 +5,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import {runtimeRequire} from './dependencies.mjs';
 import {parsePluginOptions,simpleObfs} from './ss-plugin.mjs';
+import {nativeClashNode} from './clash-native.mjs';
 const YAML=runtimeRequire('yaml');
 const MAX_BYTES=2*1024*1024;
 const decode=s=>Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');
@@ -53,6 +54,9 @@ function uri(line) {
  return node({type:type==='https'?'http':type,name:decodeURIComponent(u.hash.slice(1)),host:u.hostname.replace(/^\[|\]$/g,''),port:u.port||(type==='https'?443:type==='http'?80:0),uuid:decodeURIComponent(u.username),password:decodeURIComponent(type==='trojan'?u.username:u.password),username:decodeURIComponent(u.username),flow:p.get('flow'),transport:{network:p.get('type')||'tcp',security:p.get('security')||(type==='trojan'||type==='https'?'tls':'none'),sni:p.get('sni'),fp:p.get('fp'),pbk:p.get('pbk'),sid:p.get('sid'),spx:p.get('spx'),path:p.get('path'),host:p.get('host'),serviceName:p.get('serviceName'),alpn:p.get('alpn'),insecure:['1','true'].includes(p.get('allowInsecure'))}});
 }
 function clash(v) {
+ if(['anytls','hysteria2'].includes(v.type)||v.type==='vless'&&(v.network==='xhttp'||v['ech-opts']||v.encryption&&v.encryption!=='none')){
+  const {node,port}=nativeClashNode(v);return {name:clean(v.name)||v.type+' · '+v.server,protocol:v.type,server:v.server,port,config:{engine:'mihomo',node}};
+ }
  if(v['dialer-proxy'])throw Error('暂不支持链式代理');
  if(v.plugin&&v.type!=='ss')throw Error('只有 SS 节点支持混淆插件');
  const plugin=simpleObfs(v.plugin,v['plugin-opts']||{});

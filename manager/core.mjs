@@ -1,3 +1,4 @@
+import {nativeClashNode} from './clash-native.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -50,7 +51,7 @@ export function updateSettings(old,input){
  if(s.telegram.local&&(!/^[1-9]\d{0,9}$/.test(s.telegram.apiId||'')||Number(s.telegram.apiId)>2147483647||!/^[a-f0-9]{32}$/i.test(s.telegram.apiHash||'')))throw Error('大文件服务需要有效的 Telegram API ID 和 API Hash');
  if(s.telegram.enabled&&!/^\d{5,15}:[A-Za-z0-9_-]{20,}$/.test(s.telegram.token))throw Error('Telegram Token 格式不正确');
  if(s.feishu.enabled&&(!/^cli_[a-zA-Z0-9]+$/.test(s.feishu.appId)||!s.feishu.appSecret))throw Error('请填写飞书 App ID 和 App Secret');
- if(input.proxy){if(!['direct','xray'].includes(input.proxy.mode))throw Error('代理模式不支持');s.proxy.mode=input.proxy.mode;if(input.proxy.config){const c=typeof input.proxy.config==='string'?JSON.parse(input.proxy.config):input.proxy.config;if(!Array.isArray(c.outbounds)||!c.outbounds.length)throw Error('Xray 配置需要 outbounds');s.proxy.config=c;s.proxy.source='manual';}if(s.proxy.mode==='xray'&&!s.proxy.config)throw Error('请填写 Xray JSON 配置');}
+ if(input.proxy){if(!['direct','xray'].includes(input.proxy.mode))throw Error('代理模式不支持');s.proxy.mode=input.proxy.mode;if(input.proxy.config){const c=typeof input.proxy.config==='string'?JSON.parse(input.proxy.config):input.proxy.config;if(c.engine==='mihomo')nativeClashNode(c.node);else if(!Array.isArray(c.outbounds)||!c.outbounds.length)throw Error('代理配置需要有效节点');s.proxy.config=c;s.proxy.source='manual';}if(s.proxy.mode==='xray'&&!s.proxy.config)throw Error('请填写 Xray JSON 配置');}
  return s;
 }
 export function xrayConfig(s){const c=s.proxy.mode==='xray'?structuredClone(s.proxy.config):{outbounds:[{protocol:'freedom'}]};c.inbounds=[{listen:'0.0.0.0',port:1080,protocol:'http',settings:{}}];c.log={loglevel:'warning'};delete c.api;delete c.stats;return c;}

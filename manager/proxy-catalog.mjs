@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 const idOf=config=>crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0,20);
 export function describeNode(config,name='已保存的节点') {
+ if(config?.engine==='mihomo'&&config.node){const n=config.node;return {id:idOf(config),name,protocol:n.type,server:n.server,port:n.port||Number(String(n.ports||'').split(/[-,]/)[0]),config,sourceId:'local'};}
  const out=config?.outbounds?.find(o=>!['freedom','blackhole','dns'].includes(o.protocol));
  if(!out)return null;const peer=out.settings?.vnext?.[0]||out.settings?.servers?.[0];
  return {id:idOf(config),name,protocol:out.protocol,server:peer?.address||'',port:peer?.port,config,sourceId:'local'};

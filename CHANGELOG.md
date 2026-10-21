@@ -1,3 +1,9 @@
+# 1.7.0 · 2026-10-21
+
+- Clash 订阅新增 AnyTLS、Hysteria2 和 VLESS XHTTP / ECH，保留跳跃端口与连接参数。
+- 内置校验固定版本的 Mihomo ARM64 / AMD64 内核，统一接入节点检测、配置校验和自动切换；既有 Xray 节点继续可用。
+- 仅提取订阅节点，隔离订阅中的控制器、DNS、TUN、监听与路由设置。
+
 # 1.6.5 · 2026-10-19
 
 - SS 节点支持 obfs-local / simple-obfs 的 HTTP、TLS 混淆，兼容 SIP002 分享链接与 Clash 订阅。

@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {simpleObfs} from './ss-plugin.mjs';
+import {nativeClashConfig} from './clash-native.mjs';
 
 export const runtimePath=fileURLToPath(import.meta.url);
 // The saved node keeps its real endpoint. Only this private runtime copy is redirected.
@@ -39,6 +40,12 @@ export async function runProxy(filename,{test=false}={}) {
  const launch=(cmd,args)=>{const proc=spawn(cmd,args,{stdio:'ignore'});children.push(proc);proc.once('error',()=>halt(1));proc.once('exit',code=>halt(test?code??1:1));return proc;};
  try{
   const input=JSON.parse(fs.readFileSync(filename,'utf8'));
+  if(input.engine&&!['xray','mihomo'].includes(input.engine))throw Error('不支持的代理内核');
+  if(input.engine==='mihomo'){
+   fs.writeFileSync(dir+'/mihomo.json',JSON.stringify(nativeClashConfig(input)),{mode:0o600});
+   if(!quitting)launch(process.env.MIHOMO_BINARY||'/usr/local/bin/mihomo',[...(test?['-t']:[]),'-d',dir,'-f',dir+'/mihomo.json']);
+   await finished;return exitCode;
+  }
   const count=(input.outbounds||[]).filter(o=>o._mdhObfs).length;
   if(count>16)throw Error('SS 插件数量超过限制');
   const ports=[];for(let i=0;i<count;i++){let port;do{port=await freePort();}while(ports.includes(port));ports.push(port);}

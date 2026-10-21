@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import {gunzipSync} from 'node:zlib';
 const root = fileURLToPath(new URL('../', import.meta.url));
 let checked = 0;
 function syntax(dir) {
@@ -23,5 +24,10 @@ for (const [arch, expected] of Object.entries(hashes.binaries)) {
   if (actual !== expected) throw Error(`Xray ${arch} checksum mismatch`);
 }
 const version = JSON.parse(readFileSync(path.join(root, 'package.json'))).version;
+const mihomo=JSON.parse(readFileSync(path.join(root,'vendor/mihomo/checksums.json')));
+for(const [arch,v] of Object.entries(mihomo.assets)){
+ const gz=readFileSync(path.join(root,'vendor/mihomo',arch+'.gz'));
+ if(createHash('sha256').update(gz).digest('hex')!==v.sha256||createHash('sha256').update(gunzipSync(gz)).digest('hex')!==v.binarySha256)throw Error(`Mihomo ${arch} checksum mismatch`);
+}
 if (!readFileSync(path.join(root, 'compose.yaml'), 'utf8').includes(`image: media-download-hub:${version}`)) throw Error('Compose and package versions differ');
-console.log(`Checked ${checked} JavaScript files, Xray checksums and Compose version.`);
+console.log(`Checked ${checked} JavaScript files, Xray/Mihomo checksums and Compose version.`);

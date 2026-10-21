@@ -2,6 +2,10 @@
 ARG COBALT_IMAGE=ghcr.io/imputnet/cobalt@sha256:63186dd68afd57ce3bb1f62cc4c139f5fa95b9c3e87a3cf5c6e4c7a570523f62
 ARG NODE_IMAGE=node@sha256:8510330d3eb72c804231a834b1a8ebb55cb3796c3e4431297a24d246b8add4d5
 FROM ${COBALT_IMAGE} AS ffmpeg-binary
+FROM ${NODE_IMAGE} AS mihomo-binary
+ARG TARGETARCH
+COPY vendor/mihomo /src/mihomo
+RUN node -e 'const fs=require("fs"),c=require("crypto"),z=require("zlib"),arch=process.env.TARGETARCH||(process.arch==="arm64"?"arm64":"amd64"),lock=require("/src/mihomo/checksums.json").assets[arch],gz=fs.readFileSync("/src/mihomo/"+arch+".gz"); if(c.createHash("sha256").update(gz).digest("hex")!==lock.sha256) throw Error("Mihomo archive checksum mismatch"); const bin=z.gunzipSync(gz); if(c.createHash("sha256").update(bin).digest("hex")!==lock.binarySha256) throw Error("Mihomo binary checksum mismatch"); fs.writeFileSync("/usr/local/bin/mihomo",bin,{mode:0o755})'
 FROM ${NODE_IMAGE} AS obfs-builder
 RUN apk add --no-cache build-base autoconf automake libtool linux-headers libev-dev
 COPY vendor/simple-obfs /src/archives
@@ -19,6 +23,8 @@ COPY runtime/feishu/package*.json /feishu-runtime/
 COPY runtime/youtube/package*.json /youtube-runtime/
 RUN cd /runtime && npm ci --omit=dev --ignore-scripts && cd /feishu-runtime && npm ci --omit=dev --ignore-scripts && cd /youtube-runtime && npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=ffmpeg-binary /app/node_modules/.pnpm/ffmpeg-static@5.3.0/node_modules/ffmpeg-static/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=mihomo-binary /usr/local/bin/mihomo /usr/local/bin/mihomo
+COPY --from=mihomo-binary /src/mihomo/LICENSE /usr/local/share/licenses/mihomo/LICENSE
 COPY --from=obfs-builder /src/simple-obfs/src/obfs-local /usr/local/bin/obfs-local
 COPY --from=obfs-builder /usr/lib/libev.so.4* /usr/lib/
 COPY --from=obfs-builder /src/simple-obfs/COPYING /usr/local/share/licenses/simple-obfs/COPYING

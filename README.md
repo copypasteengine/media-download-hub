@@ -76,7 +76,7 @@ Telegram：保存 Token 并连接成功后，扫码或点击机器人链接，�
 - 点击节点「使用」切换并进入手动模式；点击「自动选择」检测可用节点后选择延迟较低的节点。现有代理会自动迁移到列表并保持选中。
 - 延迟检测启动独立临时代理，实际访问 YouTube 检测地址；不会切换当前代理。检测串行执行，单节点最多约 14 秒，每轮最多 30 个节点，可随时取消；其它节点可以单独点检测。
 - 自动模式每 10 分钟检查一次，当前节点可用时保持连接，失效才寻找替代。队列正在下载时等待空闲再切换；没有可用节点时保留原配置，不自动切成直连。
-- 支持 VLESS、VMess、Trojan、Shadowsocks 常见链接、Base64 订阅、Clash `proxies` YAML 和 Xray 订阅文件。支持 SS 的 `obfs-local` / `simple-obfs` HTTP、TLS 混淆及 Clash `plugin: obfs`，镜像内固定源码编译插件；导入、校验、节点检测与正式运行使用相同组件。暂不支持 Hysteria2、TUIC、Clash 策略组、其它插件及链式节点的自动转换；不支持的节点会提示原因。
+- 支持 VLESS、VMess、Trojan、Shadowsocks 常见链接、Base64 订阅、Clash `proxies` YAML 和 Xray 订阅文件。支持 SS 的 `obfs-local` / `simple-obfs` HTTP、TLS 混淆及 Clash `plugin: obfs`，镜像内固定源码编译插件；导入、校验、节点检测与正式运行使用相同组件。Clash 订阅中的 AnyTLS、Hysteria2（含端口跳跃）、VLESS XHTTP / ECH 使用镜像内固定版本的 Mihomo 内核运行，保留对应协议参数；普通节点继续兼容 Xray。订阅仅提取节点，不导入全局 DNS、TUN、监听端口、控制器或路由规则。暂不支持 TUIC、Clash 策略组、其它插件及链式节点的自动转换；不支持的节点会提示原因。
 
 订阅 URL 需要服务器可以直连；无法直连时可在自己的浏览器下载订阅文件再上传。订阅内容目前手动更新，节点连通性检查与订阅更新是两件事。所有代理及检测均限本项目使用，不影响宿主机网络。
 
