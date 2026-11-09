@@ -12,6 +12,7 @@ COPY patches/ffmpeg.js patches/mux-output.js /app/src/stream/
 COPY patches/bilibili.js patches/youtube.js patches/youtube-account.js /app/src/processing/services/
 COPY patches/youtube-client.js /app/src/processing/services/
 COPY patches/request.js /app/src/processing/request.js
+COPY patches/url.js /app/src/processing/url.js
 COPY patches/match.js /app/src/processing/match.js
 COPY patches/match-action.js /app/src/processing/match-action.js
 WORKDIR /app

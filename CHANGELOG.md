@@ -1,3 +1,8 @@
+# 未发布
+
+- 兼容 B 站短链接跳转到 `/zh-Hans/video/...` 等带语言前缀的视频地址，保留分 P 和画质选择，修复近期短链接返回 `error.api.fetch.fail` 的问题。
+- Cobalt 镜像更新为 `media-download-hub-cobalt:11.7.1-3`，已有部署只需重建 Cobalt 服务。
+
 # 1.7.0 · 2026-10-21
 
 - Clash 订阅新增 AnyTLS、Hysteria2 和 VLESS XHTTP / ECH，保留跳跃端口与连接参数。

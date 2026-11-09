@@ -51,7 +51,7 @@ services:
       retries: 3
   cobalt:
     <<: *app
-    image: media-download-hub-cobalt:11.7.1-2
+    image: media-download-hub-cobalt:11.7.1-3
     build:
       context: .
       dockerfile: Dockerfile.cobalt
